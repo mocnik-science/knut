@@ -1,6 +1,6 @@
 //! Criterion benchmarks for reference queries.
 //!
-//! `KNUT_BENCH_FILE=data/knut/bremen.knut KNUT_BENCH_BBOX=8.78,53.06,8.84,53.09 cargo bench -p knut`
+//! `KNUT_BENCH_FILE=data/knut/bremen.knutdb KNUT_BENCH_BBOX=8.78,53.06,8.84,53.09 cargo bench -p knut`
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use knut_format::{BBox, ObjType};
@@ -8,7 +8,7 @@ use knut::{Filter, Reader};
 use std::hint::black_box;
 
 fn bench(c: &mut Criterion) {
-    let path = std::env::var("KNUT_BENCH_FILE").unwrap_or_else(|_| "../../data/knut/bremen.knut".into());
+    let path = std::env::var("KNUT_BENCH_FILE").unwrap_or_else(|_| "../../data/knut/bremen.knutdb".into());
     let Ok(r) = Reader::open(&path) else {
         eprintln!("skipping benchmarks: cannot open {path} (set KNUT_BENCH_FILE)");
         return;

@@ -16,6 +16,7 @@ doc = false
 knut-format.workspace = true
 knut-builder.workspace = true
 knut.workspace = true
+knut-exec.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 rayon.workspace = true

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Parameter sweep: builds an .knut file with different options and reports size/time."""
+"""Parameter sweep: builds an .knutdb file with different options and reports size/time."""
 import re, subprocess, sys, time, os
 
 pbf = sys.argv[1]
-out = sys.argv[2] if len(sys.argv) > 2 else "/tmp/knut-sweep.knut"
+out = sys.argv[2] if len(sys.argv) > 2 else "/tmp/knut-sweep.knutdb"
 variants = [a.split() for a in sys.argv[3:]] or [
     ["--block-kib", "128"], ["--block-kib", "256"], ["--block-kib", "512"],
     ["--block-kib", "256", "--zstd-level", "19"], ["--block-kib", "256", "--no-dict"],

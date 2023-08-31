@@ -1,0 +1,498 @@
+//! Spatial joins (`near`, `nearest`) by straight line and on networks (KNUT_LANG.md §5.7,
+//! §7.4 item 7). The smaller side goes into a grid index or a multi-source search; the
+//! other side is probed per element.
+
+use crate::eval::{Ctx, Sc, lock};
+use crate::geom::{self, BBoxF, Geom, P};
+use crate::net::{Metric, Net};
+use crate::region::Region;
+use crate::scan::{KindMask, ScanSpec, TimeMode};
+use crate::set::{Hints, Query, SetSrc, SetV};
+use crate::value::*;
+use knut_format::ObjType;
+use knut_lang::ast::{Expr, Kind, Mode, Quant, Threshold};
+use knut_lang::diag::{Diagnostic, Header, Span, Text2};
+use knut_lang::units::Dim;
+use knut_plan::pushdown::TagPred;
+use rustc_hash::FxHashMap as HashMap;
+use std::sync::Arc;
+
+pub struct GeoIndex {
+    pub items: Vec<(Value, Arc<Geom>, BBoxF)>,
+    cell: f64,
+    grid: HashMap<(i32, i32), Vec<u32>>,
+}
+
+impl GeoIndex {
+    fn build(items: Vec<(Value, Arc<Geom>)>) -> GeoIndex {
+        let items: Vec<(Value, Arc<Geom>, BBoxF)> = items.into_iter().filter(|x| !x.1.is_empty()).map(|(v, g)| {
+            let b = g.bbox();
+            (v, g, b)
+        }).collect();
+        let mut all = BBoxF::EMPTY;
+        for i in &items {
+            all.union(&i.2);
+        }
+        let n = items.len().max(1) as f64;
+        let w = if all.is_empty() { 1.0 } else { (all.maxx - all.minx).max(all.maxy - all.miny).max(1e-4) };
+        let cell = (w / n.sqrt()).clamp(0.0005, 1.0);
+        let mut grid: HashMap<(i32, i32), Vec<u32>> = HashMap::default();
+        for (i, (_, _, b)) in items.iter().enumerate() {
+            let (x0, y0) = ((b.minx / cell).floor() as i32, (b.miny / cell).floor() as i32);
+            let (x1, y1) = ((b.maxx / cell).floor() as i32, (b.maxy / cell).floor() as i32);
+            for x in x0..=x1.min(x0 + 200) {
+                for y in y0..=y1.min(y0 + 200) {
+                    grid.entry((x, y)).or_default().push(i as u32);
+                }
+            }
+        }
+        GeoIndex { items, cell, grid }
+    }
+
+    fn candidates(&self, b: &BBoxF) -> Vec<u32> {
+        let (x0, y0) = ((b.minx / self.cell).floor() as i32, (b.miny / self.cell).floor() as i32);
+        let (x1, y1) = ((b.maxx / self.cell).floor() as i32, (b.maxy / self.cell).floor() as i32);
+        let mut out = Vec::new();
+        if (x1 - x0) as i64 * (y1 - y0) as i64 > 1_000_000 {
+            return (0..self.items.len() as u32).collect();
+        }
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                if let Some(v) = self.grid.get(&(x, y)) {
+                    out.extend_from_slice(v);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Nearest item by straight-line distance (ties: smaller key).
+    pub fn nearest(&self, g: &Geom, skip: Option<&Key>) -> Option<(usize, f64)> {
+        let Some(p) = g.rep_point() else { return None };
+        let mut best: Option<(usize, f64)> = None;
+        let mut r = 0usize;
+        let (cx, cy) = ((p.0 / self.cell).floor() as i32, (p.1 / self.cell).floor() as i32);
+        let max_r = 400usize;
+        while r <= max_r {
+            let ri = r as i32;
+            let mut seen_any = false;
+            for dx in -ri..=ri {
+                for dy in -ri..=ri {
+                    if dx.abs() != ri && dy.abs() != ri {
+                        continue;
+                    }
+                    let Some(v) = self.grid.get(&(cx + dx, cy + dy)) else { continue };
+                    seen_any = true;
+                    for &i in v {
+                        let (val, ig, _) = &self.items[i as usize];
+                        if skip.map_or(false, |k| *k == val.key()) {
+                            continue;
+                        }
+                        let d = geom::distance_m(g, ig);
+                        let better = match best {
+                            None => true,
+                            Some((bi, bd)) => d < bd || (d == bd && val.key() < self.items[bi].0.key()),
+                        };
+                        if better {
+                            best = Some((i as usize, d));
+                        }
+                    }
+                }
+            }
+            let _ = seen_any;
+            if let Some((_, bd)) = best {
+                // all closer items lie within the searched rings
+                let ring_m = (r as f64) * self.cell * 111_000.0 * p.1.to_radians().cos().max(0.1);
+                if bd <= ring_m {
+                    break;
+                }
+            }
+            r += 1;
+        }
+        if best.is_none() && !self.items.is_empty() {
+            // far away: brute force
+            for (i, (val, ig, _)) in self.items.iter().enumerate() {
+                if skip.map_or(false, |k| *k == val.key()) {
+                    continue;
+                }
+                let d = geom::distance_m(g, ig);
+                if best.map_or(true, |b| d < b.1) {
+                    best = Some((i, d));
+                }
+            }
+        }
+        best
+    }
+}
+
+pub fn geo_index(ctx: &Ctx, set: &Arc<SetV>, span: Span) -> R<Arc<GeoIndex>> {
+    {
+        let c = lock(&ctx.caches.geo);
+        if let Some((_, ix)) = c.iter().find(|(s, _)| Arc::ptr_eq(s, set)) {
+            return Ok(ix.clone());
+        }
+    }
+    let items = set.items(ctx, Hints { geom: true, hist: false })?;
+    let mut v = Vec::with_capacity(items.len());
+    for it in items.iter() {
+        if let Some(g) = ctx.geom_of(it, span)? {
+            v.push((it.clone(), g));
+        }
+    }
+    let ix = Arc::new(GeoIndex::build(v));
+    lock(&ctx.caches.geo).push((set.clone(), ix.clone()));
+    Ok(ix)
+}
+
+fn speed(m: Mode) -> f64 {
+    match m {
+        Mode::Foot => 5.0 / 3.6,
+        Mode::Bicycle => 15.0 / 3.6,
+        _ => 100.0 / 3.6,
+    }
+}
+
+/// The network for a mode: `using NET` or the standard network around `bbox`.
+pub fn network(ctx: &Ctx, mode: Mode, using: Option<&'static Expr>, bbox: BBoxF, sc: &Sc, span: Span) -> R<Arc<Net>> {
+    if mode == Mode::Transit {
+        return Err(RtErr::fatal(
+            Diagnostic::error(
+                "E502",
+                span,
+                Text2::new("\"by transit\" needs a network, and none is available.", "\"by transit\" braucht ein Netz, und es gibt keines."),
+            )
+            .why(
+                "Public transport timetables (GTFS) are not part of the history file.",
+                "Fahrpläne des öffentlichen Verkehrs (GTFS) sind nicht Teil der Historie.",
+            )
+            .header(Header::YouCan)
+            .sugg_label("use another way of moving:", "eine andere Fortbewegungsart nehmen:", "by foot"),
+        ));
+    }
+    if let Some(u) = using {
+        let v = ctx.eval(u, sc)?;
+        let Value::Net(n) = v else {
+            return Err(RtErr::fatal(Diagnostic::error(
+                "E502",
+                u.span,
+                Text2::new(
+                    format!("\"{}\" is not a network.", ctx.text(u.span)),
+                    format!("\"{}\" ist kein Netz.", ctx.text(u.span)),
+                ),
+            )
+            .why("Build one with \"graph of\", for example:", "Ein Netz entsteht mit \"graph of\", zum Beispiel:")
+            .sugg("net = graph of ways w with w:highway")));
+        };
+        let name = ctx.text(u.span).to_string();
+        if n.n_edges() == 0 {
+            return Err(RtErr::fatal(
+                Diagnostic::error(
+                    "E502",
+                    u.span,
+                    Text2::new(format!("\"by {}\" needs a network, and none is available.", mode.name()), format!("\"by {}\" braucht ein Netz, und es gibt keines.", mode.name())),
+                )
+                .why(format!("\"{name}\" contains no edges that can be used."), format!("\"{name}\" enthält keine nutzbaren Kanten."))
+                .header(Header::YouCan)
+                .sugg_label("leave out \"using\" to use the standard network", "\"using\" weglassen, um das Standardnetz zu nutzen", "")
+                .sugg_label("define the network:", "das Netz definieren:", format!("{name} = graph of ways w with w:highway")),
+            ));
+        }
+        if n.usable(mode) == 0 {
+            return Err(RtErr::fatal(
+                Diagnostic::error(
+                    "E503",
+                    u.span,
+                    Text2::new("This network does not match the way of moving.", "Dieses Netz passt nicht zur Fortbewegungsart."),
+                )
+                .why(
+                    format!("\"{name}\" has no ways that can be used {}.", match mode {
+                        Mode::Foot => "on foot",
+                        Mode::Bicycle => "by bicycle",
+                        _ => "by car",
+                    }),
+                    format!("\"{name}\" hat keine Wege, die sich {} nutzen lassen.", match mode {
+                        Mode::Foot => "zu Fuß",
+                        Mode::Bicycle => "mit dem Rad",
+                        _ => "mit dem Auto",
+                    }),
+                )
+                .header(Header::YouCan)
+                .sugg_label("use a matching mode:", "eine passende Fortbewegungsart nehmen:", "by car")
+                .sugg_label("build a walking network:", "ein Fußwegenetz bauen:", "walkNet = graph of ways w with w:highway in [footway, path, steps]"),
+            ));
+        }
+        return Ok(n);
+    }
+    standard_net(ctx, bbox, span)
+}
+
+/// Standard network: all highway ways within `bbox` (latest state).
+pub fn standard_net(ctx: &Ctx, bbox: BBoxF, span: Span) -> R<Arc<Net>> {
+    let key = format!("{:.3},{:.3},{:.3},{:.3}", bbox.minx, bbox.miny, bbox.maxx, bbox.maxy);
+    if let Some(n) = lock(&ctx.caches.nets).get(&key) {
+        return Ok(n.clone());
+    }
+    // reuse a cached network that covers the box
+    for n in lock(&ctx.caches.nets).values() {
+        if n.bbox.contains_box(&bbox) {
+            return Ok(n.clone());
+        }
+    }
+    let spec = ScanSpec {
+        kinds: KindMask { way: true, ..Default::default() },
+        time: TimeMode::State(ctx.latest()),
+        region: Some(Arc::new(Region::Box(bbox))),
+        pred: TagPred::Has("highway".into()),
+        need_geom: false,
+        need_hist: false,
+    };
+    let q = Query { spec, vars: vec!["_".into()], preds: vec![], scope: None, seq: None };
+    let set = SetV::lazy(SetSrc::Query(Arc::new(q)));
+    let n = Arc::new(net_from(ctx, &set, span)?);
+    lock(&ctx.caches.nets).insert(key, n.clone());
+    Ok(n)
+}
+
+/// Builds a network from a set of ways.
+pub fn net_from(ctx: &Ctx, set: &SetV, span: Span) -> R<Net> {
+    let _ = span;
+    let items = set.items(ctx, Hints::default())?;
+    let ways: Vec<Arc<Elem>> = items
+        .iter()
+        .filter_map(|v| match v {
+            Value::Elem(e) if e.otype == Some(ObjType::Way) => Some(e.clone()),
+            _ => None,
+        })
+        .collect();
+    let db = ctx.db()?;
+    let reqs: Vec<(i64, i64)> = ways.iter().map(|e| (e.id, e.at)).collect();
+    let geoms = db.way_geoms(&reqs);
+    let mut input = Vec::with_capacity(ways.len());
+    for e in ways {
+        let Some(Some((nids, pts))) = geoms.get(&(e.id, e.at)) else { continue };
+        let mut ni = Vec::new();
+        let mut ps = Vec::new();
+        for (n, p) in nids.iter().zip(pts) {
+            if let Some(p) = p {
+                ni.push(*n);
+                ps.push(*p);
+            }
+        }
+        input.push((e, ni, ps));
+    }
+    Ok(Net::build(&input))
+}
+
+fn threshold_value(ctx: &Ctx, th: Option<&'static Threshold>, sc: &Sc) -> R<(f64, Dim, bool, Option<Mode>, Option<&'static Expr>, Span)> {
+    match th {
+        None => Ok((ctx.chk.settings.near_distance, Dim::LENGTH, false, None, None, Span::default())),
+        Some(t) => {
+            let v = ctx.eval(&t.value, sc)?;
+            let n = ctx.to_num(&v, None, t.value.span)?.unwrap_or(Num::plain(0.0));
+            let mode = t.mode.as_ref().map(|m| m.mode);
+            let using = t.mode.as_ref().and_then(|m| m.using.as_deref());
+            Ok((n.v, n.dim, t.or_equal, mode, using, t.value.span))
+        }
+    }
+}
+
+/// Multi-source network search from the members of a set (cached).
+pub struct NetNearest {
+    pub net: Arc<Net>,
+    pub dist: Vec<f64>,
+    pub label: Vec<u32>,
+    pub items: Arc<Vec<Value>>,
+    /// Snap distance per item.
+    pub snap: Vec<f64>,
+}
+
+pub fn net_nearest(ctx: &Ctx, set: &Arc<SetV>, mode: Mode, metric: Metric, using: Option<&'static Expr>, radius_m: f64, sc: &Sc, span: Span) -> R<Arc<NetNearest>> {
+    let key = (Arc::as_ptr(set) as usize, mode as u8, matches!(metric, Metric::Time) as u8);
+    if let Some(x) = lock(&ctx.caches.net_nearest).get(&key) {
+        return Ok(x.1.clone());
+    }
+    let items = set.items(ctx, Hints { geom: true, hist: false })?;
+    let mut bb = BBoxF::EMPTY;
+    for it in items.iter() {
+        if let Some(p) = ctx.rep_point(it) {
+            bb.add(p);
+        }
+    }
+    if bb.is_empty() {
+        bb = ctx.db().map(|d| d.extent).unwrap_or(BBoxF::WORLD);
+    }
+    let net = network(ctx, mode, using, bb.expand_m(radius_m), sc, span)?;
+    let mut sources = Vec::new();
+    let mut snap = Vec::new();
+    for (i, it) in items.iter().enumerate() {
+        let p = ctx.rep_point(it);
+        match p.and_then(|p| net.snap(p, mode)) {
+            Some((n, d)) => {
+                let c = match metric {
+                    Metric::Time => d / speed(mode),
+                    Metric::Length => d,
+                };
+                sources.push((n, c, i as u32));
+                snap.push(d);
+            }
+            None => snap.push(f64::INFINITY),
+        }
+    }
+    let (dist, label, _) = net.search(&sources, mode, metric, f64::INFINITY);
+    let r = Arc::new(NetNearest { net, dist, label, items: items.clone(), snap });
+    lock(&ctx.caches.net_nearest).insert(key, (set.clone(), r.clone()));
+    Ok(r)
+}
+
+pub fn near(ctx: &Ctx, l: &'static Expr, quant: Quant, set_e: &'static Expr, th: Option<&'static Threshold>, sc: &Sc, span: Span) -> R<Value> {
+    let x = ctx.eval(l, sc)?;
+    if x.is_none() {
+        return Ok(Value::Bool(false));
+    }
+    let sv = ctx.eval(set_e, sc)?;
+    let set = ctx.as_set(&sv, set_e.span)?;
+    let (d, dim, or_eq, mode, using, tspan) = threshold_value(ctx, th, sc)?;
+    let within = |dist: f64| dist < d || (or_eq && dist <= d);
+    let self_key = x.key();
+    match mode {
+        None => {
+            if dim != Dim::LENGTH {
+                return Err(RtErr::fatal(
+                    Diagnostic::error("E303", tspan, Text2::new("This unit does not fit here.", "Diese Einheit passt hier nicht."))
+                        .why("Without \"by\", \"near\" measures straight-line distance.", "Ohne \"by\" misst \"near\" die Luftlinie.")
+                        .header(Header::DidYouMean)
+                        .sugg(format!("{} by foot", ctx.text(th.map_or(span, |t| t.span)))),
+                ));
+            }
+            let ix = geo_index(ctx, &set, set_e.span)?;
+            let Some(gx) = ctx.geom_of(&x, l.span)? else { return Ok(Value::Bool(false)) };
+            let bb = gx.bbox().expand_m(d);
+            let cands = ix.candidates(&bb);
+            Ok(Value::Bool(match quant {
+                Quant::Some | Quant::No => {
+                    let hit = cands.iter().any(|&i| {
+                        let (v, g, _) = &ix.items[i as usize];
+                        v.key() != self_key && within(geom::distance_m(&gx, g))
+                    });
+                    (quant == Quant::Some) == hit
+                }
+                Quant::All => {
+                    let n_other = ix.items.iter().filter(|(v, _, _)| v.key() != self_key).count();
+                    let n_near = cands
+                        .iter()
+                        .filter(|&&i| {
+                            let (v, g, _) = &ix.items[i as usize];
+                            v.key() != self_key && within(geom::distance_m(&gx, g))
+                        })
+                        .count();
+                    n_near == n_other
+                }
+            }))
+        }
+        Some(m) => {
+            let metric = if dim == Dim::TIME { Metric::Time } else { Metric::Length };
+            let radius = match metric {
+                Metric::Time => d * speed(m),
+                Metric::Length => d,
+            };
+            let Some(px) = ctx.rep_point(&x) else { return Ok(Value::Bool(false)) };
+            match quant {
+                Quant::Some | Quant::No => {
+                    let nn = net_nearest(ctx, &set, m, metric, using, radius, sc, span)?;
+                    let hit = match nn.net.snap(px, m) {
+                        Some((n, sd)) => {
+                            let extra = match metric {
+                                Metric::Time => sd / speed(m),
+                                Metric::Length => sd,
+                            };
+                            let c = nn.dist[n as usize] + extra;
+                            // the nearest member may be the element itself
+                            let lab = nn.label[n as usize];
+                            if lab != u32::MAX && nn.items[lab as usize].key() == self_key {
+                                // search again without the element
+                                let others: Vec<Value> = nn.items.iter().filter(|v| v.key() != self_key).cloned().collect();
+                                let tmp = Arc::new(SetV::from_vec(others));
+                                let nn2 = net_nearest_uncached(ctx, &tmp, m, metric, &nn.net)?;
+                                within(nn2.0[n as usize] + extra)
+                            } else {
+                                within(c)
+                            }
+                        }
+                        None => false,
+                    };
+                    Ok(Value::Bool((quant == Quant::Some) == hit))
+                }
+                Quant::All => {
+                    let items = set.items(ctx, Hints { geom: true, hist: false })?;
+                    let mut bb = BBoxF::EMPTY;
+                    bb.add(px);
+                    let net = network(ctx, m, using, bb.expand_m(radius), sc, span)?;
+                    let Some((s, sd)) = net.snap(px, m) else { return Ok(Value::Bool(false)) };
+                    let start = match metric {
+                        Metric::Time => sd / speed(m),
+                        Metric::Length => sd,
+                    };
+                    let (dist, _, _) = net.search(&[(s, start, 0)], m, metric, d);
+                    for it in items.iter() {
+                        if it.key() == self_key {
+                            continue;
+                        }
+                        let Some(p) = ctx.rep_point(it) else { return Ok(Value::Bool(false)) };
+                        let Some((n, _)) = net.snap(p, m) else { return Ok(Value::Bool(false)) };
+                        if !within(dist[n as usize]) {
+                            return Ok(Value::Bool(false));
+                        }
+                    }
+                    Ok(Value::Bool(true))
+                }
+            }
+        }
+    }
+}
+
+fn net_nearest_uncached(ctx: &Ctx, set: &Arc<SetV>, m: Mode, metric: Metric, net: &Net) -> R<(Vec<f64>, Vec<u32>)> {
+    let items = set.items(ctx, Hints { geom: true, hist: false })?;
+    let mut sources = Vec::new();
+    for (i, it) in items.iter().enumerate() {
+        if let Some(p) = ctx.rep_point(it) {
+            if let Some((n, d)) = net.snap(p, m) {
+                let c = match metric {
+                    Metric::Time => d / speed(m),
+                    Metric::Length => d,
+                };
+                sources.push((n, c, i as u32));
+            }
+        }
+    }
+    let (d, l, _) = net.search(&sources, m, metric, f64::INFINITY);
+    Ok((d, l))
+}
+
+/// `nearest of S [to x] [by MODE]`.
+pub fn nearest(ctx: &Ctx, set: &Arc<SetV>, origin: &Value, mode: Option<(Mode, Option<&'static Expr>)>, sc: &Sc, span: Span) -> R<Value> {
+    match mode {
+        None => {
+            let ix = geo_index(ctx, set, span)?;
+            let Some(g) = ctx.geom_of(origin, span)? else { return Ok(Value::None) };
+            let k = origin.key();
+            Ok(ix.nearest(&g, Some(&k)).map_or(Value::None, |(i, _)| ix.items[i].0.clone()))
+        }
+        Some((m, using)) => {
+            let nn = net_nearest(ctx, set, m, Metric::Time, using, 20_000.0, sc, span)?;
+            let Some(p) = ctx.rep_point(origin) else { return Ok(Value::None) };
+            let Some((n, _)) = nn.net.snap(p, m) else { return Ok(Value::None) };
+            let lab = nn.label[n as usize];
+            Ok(if lab == u32::MAX { Value::None } else { nn.items[lab as usize].clone() })
+        }
+    }
+}
+
+pub fn point_of(ctx: &Ctx, v: &Value) -> Option<P> {
+    ctx.rep_point(v)
+}
+
+pub fn kind_any() -> Kind {
+    Kind::Any
+}

@@ -14,6 +14,10 @@ knut-builder = { path = "crates/knut-builder" }
 knut = { path = "crates/knut" }
 
 zstd = "0.12"
+knut-lang = { path = "crates/knut-lang" }
+knut-plan = { path = "crates/knut-plan" }
+knut-exec = { path = "crates/knut-exec" }
+anyhow = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 postcard = { version = "1", features = ["alloc"] }
 serde = { version = "1", features = ["derive", "rc"] }
@@ -31,3 +35,11 @@ arrow-buffer = "45"
 pyo3 = { version = "0.19", features = ["abi3-py39"] }
 proptest = "1"
 criterion = "0.5"
+
+[profile.release]
+debug = 1
+lto = "thin"
+codegen-units = 4
+
+[profile.bench]
+debug = 1

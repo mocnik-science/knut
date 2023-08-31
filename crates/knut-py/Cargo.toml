@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 knut-format.workspace = true
 knut.workspace = true
+knut-exec.workspace = true
 arrow-array.workspace = true
 arrow-schema.workspace = true
 pyo3.workspace = true

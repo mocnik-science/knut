@@ -1,4 +1,4 @@
-//! Opening and validating `.knut` files, block access, R-tree traversal and ID index.
+//! Opening and validating `.knutdb` files, block access, R-tree traversal and ID index.
 
 use crate::cache::BlockCache;
 use crate::{Error, Result, corrupt};

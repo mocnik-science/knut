@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compare knut against a Parquet + DuckDB baseline on equivalent queries.
 
-usage: baseline_duckdb.py FILE.knut PARQUET_DIR lon0,lat0,lon1,lat1
+usage: baseline_duckdb.py FILE.knutdb PARQUET_DIR lon0,lat0,lon1,lat1
 Results of node queries are cross-checked (counts must match).
 """
 import sys, time, statistics, datetime as dt

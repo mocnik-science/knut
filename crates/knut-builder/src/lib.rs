@@ -556,7 +556,7 @@ fn count_groups<T: Sync>(groups: &[Vec<T>], meta: fn(&T) -> (&RawMeta, &Tags)) -
         .reduce(Counters::default, Counters::merge)
 }
 
-/// Builds an `.knut` file from `src`.
+/// Builds a `.knutdb` file from `src`.
 pub fn build(src: &dyn Source, out: &Path, opt: &BuildOptions, log_raw: &(dyn Fn(&str) + Sync)) -> Result<BuildStats> {
     let log = |m: &str| log_raw(&format!("{m} [peak footprint {} MiB]", peak_footprint_bytes() >> 20));
     let p = &opt.seg;

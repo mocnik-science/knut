@@ -1,4 +1,4 @@
-//! `knut` command line: build, info, query, verify, dump, bench.
+//! `knut` command line: run scripts, build, info, query, verify, dump, bench.
 
 mod parquet_export;
 
@@ -24,7 +24,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Convert an OSM history PBF (*.osh.pbf) into .knut
+    /// Run a .knut script (also: `knut script.knut`)
+    Run(RunArgs),
+    /// Build side indexes next to a database (changesets, notes)
+    Index {
+        #[command(subcommand)]
+        what: IndexCmd,
+    },
+    /// Convert an OSM history PBF (*.osh.pbf) into .knutdb
     Build(BuildArgs),
     /// Show header, sections and statistics
     Info {
@@ -76,6 +83,47 @@ enum Cmd {
         #[arg(long, default_value_t = 5)]
         repeat: usize,
     },
+}
+
+#[derive(Args)]
+struct RunArgs {
+    script: PathBuf,
+    /// Database (overrides `knut_db` in the script)
+    #[arg(long)]
+    db: Option<PathBuf>,
+    /// Only check the script, run nothing
+    #[arg(long)]
+    check: bool,
+    /// Show the execution plan, run nothing
+    #[arg(long)]
+    explain: bool,
+    /// Output format: text, csv, json or parquet
+    #[arg(long, default_value = "text")]
+    format: String,
+    /// Write results as files into this directory
+    #[arg(long)]
+    out: Option<PathBuf>,
+    #[arg(long)]
+    threads: Option<usize>,
+    /// Rows shown per result in text output
+    #[arg(long, default_value_t = 20)]
+    limit: usize,
+    /// Do not show the run time per result
+    #[arg(long)]
+    no_timing: bool,
+}
+
+#[derive(Subcommand)]
+enum IndexCmd {
+    /// Changesets and users derived from the history; optionally comments and tags from a
+    /// changeset dump (changesets-latest.osm.bz2)
+    Changesets {
+        db: PathBuf,
+        #[arg(long)]
+        dump: Option<PathBuf>,
+    },
+    /// Notes from a notes dump (planet-notes-latest.osn.bz2)
+    Notes { db: PathBuf, dump: PathBuf },
 }
 
 #[derive(Args)]
@@ -281,7 +329,15 @@ fn geom_json(g: &[(i64, Option<(i32, i32)>)]) -> Value {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    // `knut analyse.knut …` runs a script
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.len() > 1 && args[1].to_string_lossy().ends_with(".knut") {
+        args.insert(1, "run".into());
+    }
+    let cli = Cli::parse_from(args);
+    if let Cmd::Run(a) = cli.cmd {
+        return ExitCode::from(run_script(a) as u8);
+    }
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -291,9 +347,67 @@ fn main() -> ExitCode {
     }
 }
 
+fn run_script(a: RunArgs) -> i32 {
+    if let Some(t) = a.threads {
+        if let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(t).build_global() {
+            eprintln!("error: {e}");
+            return knut_exec::EXIT_USAGE;
+        }
+    }
+    let format = match a.format.as_str() {
+        "text" => knut_exec::Format::Text,
+        "csv" => knut_exec::Format::Csv,
+        "json" => knut_exec::Format::Json,
+        "parquet" => knut_exec::Format::Parquet,
+        other => {
+            eprintln!("error: unknown format '{other}' (text, csv, json, parquet)");
+            return knut_exec::EXIT_USAGE;
+        }
+    };
+    if let Some(d) = &a.out {
+        if let Err(e) = std::fs::create_dir_all(d) {
+            eprintln!("error: {}: {e}", d.display());
+            return knut_exec::EXIT_USAGE;
+        }
+    }
+    let opts = knut_exec::Options {
+        db: a.db,
+        format,
+        out_dir: a.out,
+        check_only: a.check,
+        explain: a.explain,
+        limit: a.limit,
+        timing: !a.no_timing,
+    };
+    let stdout = std::io::stdout();
+    let mut out = stdout.lock();
+    let stderr = std::io::stderr();
+    let mut err = stderr.lock();
+    knut_exec::run_file(&a.script, &opts, &mut out, &mut err)
+}
+
+fn index(what: IndexCmd) -> Result<(), String> {
+    match what {
+        IndexCmd::Changesets { db, dump } => {
+            let d = knut_exec::db::Db::open(&db)?;
+            let st = Instant::now();
+            let p = knut_exec::cs::build_sidecar(&d, dump.as_deref(), &mut |m| eprintln!("{m}"))?;
+            eprintln!("wrote {} in {:.1} s", p.display(), st.elapsed().as_secs_f64());
+        }
+        IndexCmd::Notes { db, dump } => {
+            let st = Instant::now();
+            let (p, n) = knut_exec::notes::build_sidecar(&db, &dump)?;
+            eprintln!("wrote {} ({n} notes) in {:.1} s", p.display(), st.elapsed().as_secs_f64());
+        }
+    }
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<(), String> {
     let s = |e: &dyn std::fmt::Display| e.to_string();
     match cli.cmd {
+        Cmd::Run(_) => unreachable!(),
+        Cmd::Index { what } => index(what),
         Cmd::Build(a) => build(a),
         Cmd::Info { file, users } => info(&file, users),
         Cmd::Query { file, q } => {

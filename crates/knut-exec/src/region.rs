@@ -1,0 +1,235 @@
+//! Regions for `within` (KNUT_LANG.md §5.7): boxes, area geometries, unions and the raster
+//! of an isochrone.
+
+use crate::geom::{self, BBoxF, Geom, P, Polygon};
+use rustc_hash::FxHashSet;
+use std::sync::Arc;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cover {
+    Inside,
+    Outside,
+    Partial,
+}
+
+/// Equal-area-ish raster used for isochrones: cells of `size` metres in a local projection.
+#[derive(Debug)]
+pub struct Raster {
+    pub lon0: f64,
+    pub lat0: f64,
+    pub size: f64,
+    pub cells: FxHashSet<(i32, i32)>,
+    pub bbox: BBoxF,
+}
+
+impl Raster {
+    pub fn kx(&self) -> f64 {
+        std::f64::consts::PI / 180.0 * geom::R * self.lat0.to_radians().cos()
+    }
+
+    pub fn ky() -> f64 {
+        std::f64::consts::PI / 180.0 * geom::R
+    }
+
+    pub fn cell_of(&self, p: P) -> (i32, i32) {
+        let x = (p.0 - self.lon0) * self.kx();
+        let y = (p.1 - self.lat0) * Self::ky();
+        ((x / self.size).floor() as i32, (y / self.size).floor() as i32)
+    }
+
+    pub fn contains(&self, p: P) -> bool {
+        self.cells.contains(&self.cell_of(p))
+    }
+
+    /// Adds the cells enclosed by marked cells (blocks surrounded by reachable streets):
+    /// everything that cannot be reached from outside the bounding box of the cells.
+    pub fn fill_holes(&mut self) {
+        let Some(&(x0, y0)) = self.cells.iter().next() else { return };
+        let (mut minx, mut miny, mut maxx, mut maxy) = (x0, y0, x0, y0);
+        for &(x, y) in &self.cells {
+            minx = minx.min(x);
+            miny = miny.min(y);
+            maxx = maxx.max(x);
+            maxy = maxy.max(y);
+        }
+        // one cell of margin so that the outside is connected
+        let (minx, miny, maxx, maxy) = (minx - 1, miny - 1, maxx + 1, maxy + 1);
+        let w = (maxx - minx + 1) as usize;
+        let h = (maxy - miny + 1) as usize;
+        let idx = |x: i32, y: i32| (y - miny) as usize * w + (x - minx) as usize;
+        let mut outside = vec![false; w * h];
+        let mut stack = vec![(minx, miny)];
+        outside[idx(minx, miny)] = true;
+        while let Some((x, y)) = stack.pop() {
+            for (nx, ny) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+                if nx < minx || nx > maxx || ny < miny || ny > maxy {
+                    continue;
+                }
+                let i = idx(nx, ny);
+                if !outside[i] && !self.cells.contains(&(nx, ny)) {
+                    outside[i] = true;
+                    stack.push((nx, ny));
+                }
+            }
+        }
+        for y in miny..=maxy {
+            for x in minx..=maxx {
+                if !outside[idx(x, y)] {
+                    self.cells.insert((x, y));
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Region {
+    World,
+    Box(BBoxF),
+    Geom { geom: Arc<Geom>, bbox: BBoxF, label: String },
+    Raster(Raster),
+    Union(Vec<Arc<Region>>, BBoxF, String),
+}
+
+impl Region {
+    pub fn from_geom(g: Arc<Geom>, label: String) -> Region {
+        let bbox = g.bbox();
+        Region::Geom { geom: g, bbox, label }
+    }
+
+    pub fn bbox(&self) -> BBoxF {
+        match self {
+            Region::World => BBoxF::WORLD,
+            Region::Box(b) => *b,
+            Region::Geom { bbox, .. } => *bbox,
+            Region::Raster(r) => r.bbox,
+            Region::Union(_, b, _) => *b,
+        }
+    }
+
+    pub fn label(&self) -> String {
+        match self {
+            Region::World => "world".into(),
+            Region::Box(b) => format!("{}...{}, {}...{}", b.minx, b.maxx, b.miny, b.maxy),
+            Region::Geom { label, .. } => label.clone(),
+            Region::Raster(r) => format!("isochrone ({} cells)", r.cells.len()),
+            Region::Union(_, _, l) => l.clone(),
+        }
+    }
+
+    pub fn contains(&self, p: P) -> bool {
+        match self {
+            Region::World => true,
+            Region::Box(b) => b.contains(p),
+            Region::Geom { geom, bbox, .. } => bbox.contains(p) && geom.contains_point(p),
+            Region::Raster(r) => r.bbox.contains(p) && r.contains(p),
+            Region::Union(rs, b, _) => b.contains(p) && rs.iter().any(|r| r.contains(p)),
+        }
+    }
+
+    /// Whether a box lies fully inside, outside or across the region border.
+    pub fn cover(&self, b: &BBoxF) -> Cover {
+        if b.is_empty() {
+            return Cover::Outside;
+        }
+        match self {
+            Region::World => Cover::Inside,
+            Region::Box(r) => {
+                if r.contains_box(b) {
+                    Cover::Inside
+                } else if r.intersects(b) {
+                    Cover::Partial
+                } else {
+                    Cover::Outside
+                }
+            }
+            Region::Geom { geom, bbox, .. } => {
+                if !bbox.intersects(b) {
+                    return Cover::Outside;
+                }
+                let corners = [(b.minx, b.miny), (b.maxx, b.miny), (b.maxx, b.maxy), (b.minx, b.maxy)];
+                let inside = corners.iter().filter(|c| geom.contains_point(**c)).count();
+                if inside == 4 && !polygon_edges_cross_box(geom, b) {
+                    return Cover::Inside;
+                }
+                if inside == 0 && !polygon_edges_cross_box(geom, b) && !geom.polygons().iter().any(|p| b.contains(p.outer[0])) {
+                    return Cover::Outside;
+                }
+                Cover::Partial
+            }
+            Region::Raster(r) => {
+                if r.bbox.intersects(b) {
+                    Cover::Partial
+                } else {
+                    Cover::Outside
+                }
+            }
+            Region::Union(rs, bb, _) => {
+                if !bb.intersects(b) {
+                    return Cover::Outside;
+                }
+                let mut any_partial = false;
+                for r in rs {
+                    match r.cover(b) {
+                        Cover::Inside => return Cover::Inside,
+                        Cover::Partial => any_partial = true,
+                        Cover::Outside => {}
+                    }
+                }
+                if any_partial { Cover::Partial } else { Cover::Outside }
+            }
+        }
+    }
+
+    pub fn area_m2(&self) -> f64 {
+        match self {
+            Region::World => 510_072_000e6,
+            Region::Box(b) => b.area_km2() * 1e6,
+            Region::Geom { geom, .. } => geom.area_m2(),
+            Region::Raster(r) => r.cells.len() as f64 * r.size * r.size,
+            Region::Union(rs, _, _) => rs.iter().map(|r| r.area_m2()).sum(),
+        }
+    }
+
+    /// Geometry for distance computations.
+    pub fn geom(&self) -> Geom {
+        match self {
+            Region::World => Geom::Empty,
+            Region::Box(b) => Geom::Poly(vec![Polygon {
+                outer: vec![(b.minx, b.miny), (b.maxx, b.miny), (b.maxx, b.maxy), (b.minx, b.maxy), (b.minx, b.miny)],
+                holes: vec![],
+            }]),
+            Region::Geom { geom, .. } => (**geom).clone(),
+            Region::Raster(r) => {
+                let (kx, ky) = (r.kx(), Raster::ky());
+                Geom::Poly(
+                    r.cells
+                        .iter()
+                        .map(|&(x, y)| {
+                            let x0 = r.lon0 + x as f64 * r.size / kx;
+                            let y0 = r.lat0 + y as f64 * r.size / ky;
+                            let x1 = x0 + r.size / kx;
+                            let y1 = y0 + r.size / ky;
+                            Polygon { outer: vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)], holes: vec![] }
+                        })
+                        .collect(),
+                )
+            }
+            Region::Union(rs, _, _) => Geom::Multi(rs.iter().map(|r| r.geom()).collect()),
+        }
+    }
+}
+
+fn polygon_edges_cross_box(g: &Geom, b: &BBoxF) -> bool {
+    let e7 = |p: P| ((p.0 * 1e7) as i32, (p.1 * 1e7) as i32);
+    let bb = b.to_e7();
+    for poly in g.polygons() {
+        for ring in std::iter::once(&poly.outer).chain(poly.holes.iter()) {
+            let pts: Vec<(i32, i32)> = ring.iter().map(|p| e7(*p)).collect();
+            if knut::line_intersects(&pts, &bb) {
+                return true;
+            }
+        }
+    }
+    false
+}

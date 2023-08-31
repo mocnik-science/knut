@@ -116,7 +116,7 @@ fn dataset() -> Vec<Element> {
 fn build(elements: Vec<Element>, opt: BuildOptions) -> Reader {
     let dir = std::env::temp_dir().join(format!("knut-test-{}-{}", std::process::id(), rand_suffix()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("t.knut");
+    let path = dir.join("t.knutdb");
     let src = VecSource::new(elements);
     knut_builder::build(&src, &path, &opt, &|_| {}).unwrap();
     let bytes = std::fs::read(&path).unwrap();
@@ -347,7 +347,7 @@ fn options_variants_roundtrip() {
 fn corrupted_files_never_panic() {
     let dir = std::env::temp_dir().join(format!("knut-fuzz-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("f.knut");
+    let path = dir.join("f.knutdb");
     knut_builder::build(&VecSource::new(dataset()), &path, &small_blocks(), &|_| {}).unwrap();
     let orig = std::fs::read(&path).unwrap();
     std::fs::remove_dir_all(&dir).ok();
@@ -371,7 +371,7 @@ fn corrupted_files_never_panic() {
         }
         if let Ok(dump) = std::env::var("KNUT_FUZZ_DUMP") {
             if dump.parse::<usize>() == Ok(i) {
-                std::fs::write("/tmp/knut-fuzz.knut", &b).unwrap();
+                std::fs::write("/tmp/knut-fuzz.knutdb", &b).unwrap();
                 return;
             }
         }
@@ -439,8 +439,8 @@ fn spill_mode_output_is_byte_identical() {
         }
         data.push(way(50_000 + w, 1, T0 + w * 60, &refs, &[("building", "yes")]));
     }
-    let out_mem = dir.join("mem.knut");
-    let out_spill = dir.join("spill.knut");
+    let out_mem = dir.join("mem.knutdb");
+    let out_spill = dir.join("spill.knutdb");
     let base = BuildOptions { block_size: 4096, ..Default::default() };
     knut_builder::build(&VecSource::new(data.clone()), &out_mem, &base, &|_| {}).unwrap();
     let tiny = BuildOptions { mem_budget: 0, tmp_dir: Some(dir.clone()), ..base };

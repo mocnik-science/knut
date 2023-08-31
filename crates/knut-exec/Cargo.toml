@@ -1,0 +1,35 @@
+[package]
+name = "knut-exec"
+description = "knut language: executor for .knut scripts on .knutdb databases"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+knut-format.workspace = true
+knut.workspace = true
+knut-lang.workspace = true
+knut-plan.workspace = true
+rayon.workspace = true
+rustc-hash.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+postcard.workspace = true
+zstd.workspace = true
+xxhash-rust.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true
+parquet = { version = "45", default-features = false, features = ["arrow", "zstd"] }
+geographiclib-rs = "0.2"
+csv = "1"
+quick-xml = "0.28.2"
+bzip2 = "0.4.4"
+
+[dev-dependencies]
+knut-builder.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "constructs"
+harness = false

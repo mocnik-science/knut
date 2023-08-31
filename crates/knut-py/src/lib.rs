@@ -31,6 +31,23 @@ fn time_arg(v: &PyAny) -> PyResult<i64> {
     Err(PyValueError::new_err("time must be int, str or datetime"))
 }
 
+/// pyarrow schema of `ArrowResult.to_arrow()`, matching the dicts of `to_pylist()`.
+const ARROW_SCHEMA: &str = "pa.schema([
+    ('type', pa.string()),
+    ('id', pa.int64()),
+    ('version', pa.int32()),
+    ('timestamp', pa.timestamp('s', tz='UTC')),
+    ('changeset', pa.int64()),
+    ('uid', pa.int64()),
+    ('visible', pa.bool_()),
+    ('tags', pa.map_(pa.string(), pa.string())),
+    ('lon', pa.float64()),
+    ('lat', pa.float64()),
+    ('coords', pa.list_(pa.struct([('lon', pa.float64()), ('lat', pa.float64())]))),
+    ('nodes', pa.list_(pa.int64())),
+    ('members', pa.list_(pa.struct([('type', pa.string()), ('ref', pa.int64()), ('role', pa.string())]))),
+])";
+
 fn bbox_arg(b: Option<(f64, f64, f64, f64)>) -> BBox {
     match b {
         Some((a, c, d, e)) => BBox::from_deg(a, c, d, e),
@@ -50,10 +67,14 @@ impl ArrowResult {
         self.features.len()
     }
 
-    /// Converts to a ``pyarrow.Table`` (requires pyarrow).
+    /// Converts to a ``pyarrow.Table`` (requires pyarrow ≥ 12).
     fn to_arrow<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
         let rows = self.to_pylist(py)?;
-        py.import("pyarrow")?.getattr("Table")?.call_method1("from_pylist", (rows,))
+        let locals = PyDict::new(py);
+        locals.set_item("pa", py.import("pyarrow")?)?;
+        // fixed schema: without it pyarrow takes the columns from the first row only
+        let schema = py.eval(ARROW_SCHEMA, None, Some(locals))?;
+        py.import("pyarrow")?.getattr("Table")?.call_method1("from_pylist", (rows, schema))
     }
 
     /// Converts to a list of dicts (no dependencies).
@@ -103,10 +124,11 @@ impl ArrowResult {
     }
 }
 
-/// An open `.knut` file.
+/// An open `.knutdb` file.
 #[pyclass(module = "knut._knut", frozen)]
 pub struct Knut {
     r: Arc<Reader>,
+    path: String,
 }
 
 fn result(f: Vec<Feature>) -> ArrowResult {
@@ -146,7 +168,7 @@ impl Knut {
     #[pyo3(signature = (path, verify_checksums=true, cache_blocks=1024))]
     fn new(py: Python<'_>, path: String, verify_checksums: bool, cache_blocks: usize) -> PyResult<Knut> {
         let r = py.allow_threads(|| Reader::open_with(&path, OpenOptions { verify_checksums, cache_blocks })).map_err(err)?;
-        Ok(Knut { r: Arc::new(r) })
+        Ok(Knut { r: Arc::new(r), path })
     }
 
     /// Header information as a dict.
@@ -261,10 +283,30 @@ impl Knut {
         let rep = py.allow_threads(|| r.verify(deep)).map_err(err)?;
         Ok((rep.blocks, rep.segments))
     }
+    /// Path of the opened file.
+    #[getter]
+    fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+/// Runs a knut script and returns `(exit code, JSON outputs, messages)`. The database
+/// comes from `db` or from `knut_db` in the script (relative to `base_dir`).
+#[pyfunction]
+#[pyo3(signature = (script, db=None, base_dir=None, file=None))]
+fn run_script(py: Python<'_>, script: String, db: Option<String>, base_dir: Option<String>, file: Option<String>) -> (i32, String, String) {
+    py.allow_threads(|| {
+        let opts = knut_exec::Options { db: db.map(Into::into), format: knut_exec::Format::Json, timing: false, ..Default::default() };
+        let base = std::path::PathBuf::from(base_dir.unwrap_or_else(|| ".".into()));
+        let (mut out, mut errs) = (Vec::new(), Vec::new());
+        let code = knut_exec::run_source(&script, file.as_deref(), &base, &opts, &mut out, &mut errs);
+        (code, String::from_utf8_lossy(&out).into_owned(), String::from_utf8_lossy(&errs).into_owned())
+    })
 }
 
 #[pymodule]
 fn _knut(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(run_script, m)?)?;
     m.add_class::<Knut>()?;
     m.add_class::<ArrowResult>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

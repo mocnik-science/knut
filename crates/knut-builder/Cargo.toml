@@ -1,6 +1,6 @@
 [package]
 name = "knut-builder"
-description = "knut converter: OSM history PBF -> .knut"
+description = "knut converter: OSM history PBF -> .knutdb"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,4 +1,4 @@
-//! Memory-mapped reader and query engine for `.knut` files.
+//! Memory-mapped reader and query engine for `.knutdb` files.
 //!
 //! All offsets read from the file are bounds checked; corrupt files produce errors, not
 //! panics. See `SPEC.md` for the format.

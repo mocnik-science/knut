@@ -5,6 +5,7 @@
 # knut
 /data
 *.knut
+*.knutdb
 
 # python
 .venv

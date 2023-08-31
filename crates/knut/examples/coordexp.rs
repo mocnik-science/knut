@@ -1,5 +1,5 @@
 //! Experiment: alternative encodings for private-node coordinates (pe_lon/pe_lat).
-//! Usage: cargo run --release --example coordexp -- FILE.knut [sample_every]
+//! Usage: cargo run --release --example coordexp -- FILE.knutdb [sample_every]
 use knut_format::codec::*;
 use knut_format::{ObjType, SegmentBody};
 use knut::Reader;
