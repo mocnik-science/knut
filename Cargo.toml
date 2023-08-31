@@ -1,0 +1,33 @@
+[workspace]
+members = ["crates/knut-format", "crates/knut-builder", "crates/knut", "crates/knut-cli", "crates/knut-py"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.70"
+
+[workspace.dependencies]
+knut-format = { path = "crates/knut-format" }
+knut-builder = { path = "crates/knut-builder" }
+knut = { path = "crates/knut" }
+
+zstd = "0.12"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+postcard = { version = "1", features = ["alloc"] }
+serde = { version = "1", features = ["derive", "rc"] }
+rayon = "1.7"
+memmap2 = "0.9"
+flate2 = "1"
+libc = "0.2"
+thiserror = "1"
+rustc-hash = "1.1"
+clap = { version = "4.3", features = ["derive"] }
+serde_json = "1"
+arrow-array = "45"
+arrow-schema = "45"
+arrow-buffer = "45"
+pyo3 = { version = "0.19", features = ["abi3-py39"] }
+proptest = "1"
+criterion = "0.5"

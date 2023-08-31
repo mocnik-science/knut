@@ -1,0 +1,33 @@
+[package]
+name = "knut"
+description = "knut mmap reader and query engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[features]
+default = ["arrow"]
+arrow = ["dep:arrow-array", "dep:arrow-schema", "dep:arrow-buffer"]
+
+[dependencies]
+knut-format.workspace = true
+zstd.workspace = true
+xxhash-rust.workspace = true
+rayon.workspace = true
+memmap2.workspace = true
+thiserror.workspace = true
+rustc-hash.workspace = true
+lru = "0.10.1"
+arrow-array = { workspace = true, optional = true }
+arrow-schema = { workspace = true, optional = true }
+arrow-buffer = { workspace = true, optional = true }
+
+[dev-dependencies]
+knut-builder.workspace = true
+criterion.workspace = true
+zstd.workspace = true
+
+[[bench]]
+name = "queries"
+harness = false

@@ -1,0 +1,18 @@
+[package]
+name = "knut-py"
+description = "Python bindings for knut"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "_knut"
+crate-type = ["cdylib"]
+
+[dependencies]
+knut-format.workspace = true
+knut.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true
+pyo3.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "knut-builder"
+description = "knut converter: OSM history PBF -> .knut"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+knut-format.workspace = true
+zstd.workspace = true
+xxhash-rust.workspace = true
+postcard.workspace = true
+serde.workspace = true
+rayon.workspace = true
+memmap2.workspace = true
+flate2.workspace = true
+libc.workspace = true
+lru = "0.10.1"
+bytemuck = { version = "1", features = ["derive"] }

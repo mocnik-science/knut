@@ -1,0 +1,12 @@
+# rust
+/target
+/out
+
+# knut
+/data
+*.knut
+
+# python
+.venv
+__pycache__
+*.so

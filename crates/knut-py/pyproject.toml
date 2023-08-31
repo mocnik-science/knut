@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1..00"]
+build-backend = "maturin"
+
+[project]
+name = "knut"
+description = "Read knut files (compact OSM history with space-time index)"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dynamic = ["version"]
+dependencies = []
+
+[project.optional-dependencies]
+arrow = ["pyarrow>=12"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "knut._knut"
+features = ["pyo3/extension-module"]
