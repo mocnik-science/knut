@@ -442,6 +442,8 @@ struct EncodedBlock {
     section: u8,
     leaf: RNode,
     bloom: Bloom,
+    /// The block's sized filter (BlockBlooms section).
+    filter: Vec<u64>,
     ids: Vec<i64>,
     private_nodes: Vec<i64>,
     n_large: u64,
@@ -471,6 +473,23 @@ fn apply_pseudonyms(s: &mut Segment, map: &HashMap<u32, u32>) {
         }
         SegmentBody::Relation(vs) => vs.iter_mut().for_each(|v| m(&mut v.meta.uid)),
     }
+}
+
+/// BlockBlooms section: block count, reserved, `n + 1` word offsets (u32), padding to 8 bytes,
+/// then the filter words (u64, little endian).
+fn block_blooms_section(offsets: &[u32], words: &[u64]) -> Vec<u8> {
+    let n = offsets.len() as u32 - 1;
+    let mut b = Vec::with_capacity(8 + 4 * offsets.len() + 8 + 8 * words.len());
+    b.extend_from_slice(&n.to_le_bytes());
+    b.extend_from_slice(&0u32.to_le_bytes());
+    for o in offsets {
+        b.extend_from_slice(&o.to_le_bytes());
+    }
+    b.resize(b.len().div_ceil(8) * 8, 0);
+    for w in words {
+        b.extend_from_slice(&w.to_le_bytes());
+    }
+    b
 }
 
 fn build_tree(leaves: Vec<(RNode, Bloom)>) -> (TreeHeader, Vec<(RNode, Bloom)>) {
@@ -720,6 +739,9 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
     ));
     out.begin_stream(SectionKind::Blocks)?;
     let mut block_table = Vec::new();
+    // per block filters: word offsets and words
+    let mut filter_offsets: Vec<u32> = vec![0];
+    let mut filter_words: Vec<u64> = Vec::new();
     let mut leaves: [Vec<(RNode, Bloom)>; N_TREES] = Default::default();
     let tmp = opt.tmp_dir.clone().unwrap_or_else(|| path.parent().map(Path::to_path_buf).unwrap_or_default());
     let mut idx_sorters: Vec<ExtSorter<(i64, u32)>> =
@@ -769,6 +791,7 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
                     section: rows[0].key.section,
                     leaf: RNode { bbox: raw.bbox, tmin: raw.tmin, tmax: raw.tmax, first: 0, count: 0 },
                     bloom: raw.bloom,
+                    filter: bloom::block_filter(&raw.hashes),
                     ids: segs.iter().map(|s| s.id).collect(),
                     private_nodes,
                     n_large: segs.iter().filter(|s| s.flags & SEG_LARGE != 0).count() as u64,
@@ -789,6 +812,8 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
                 section: e.section as u16,
             }
             .write(&mut block_table);
+            filter_words.extend_from_slice(&e.filter);
+            filter_offsets.push(u32::try_from(filter_words.len()).map_err(|_| err("block filters too large"))?);
             let tree = if e.section >= 3 { TREE_LARGE } else { e.section as usize };
             leaves[tree].push((RNode { first: block_no, ..e.leaf }, e.bloom));
             bbox.union(&e.leaf.bbox);
@@ -804,6 +829,8 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
     log(&format!("wrote {} blocks ({:.1}s)", block_no, t1.elapsed().as_secs_f64()));
 
     out.section(SectionKind::BlockTable, 0, &block_table)?;
+    out.section(SectionKind::BlockBlooms, 0, &block_blooms_section(&filter_offsets, &filter_words))?;
+    drop(filter_words);
 
     // R-trees
     let mut rt = Vec::new();
@@ -856,6 +883,7 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
     if zdicts.iter().any(|d| d.is_some()) {
         features |= FEAT_ZSTD_DICT;
     }
+    features |= FEAT_BLOCK_BLOOMS;
     let meta = format!(
         "generator=knut-builder {}\nsource={}\nlicense=ODbL-1.0 (c) OpenStreetMap contributors\n\
          block_size={}\nzstd_level={}\nzstd_dict={}\nkeyframe_interval={}\nseg_grow={}\nseg_min_size_m={}\n\

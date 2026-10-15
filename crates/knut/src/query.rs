@@ -126,6 +126,16 @@ impl<'a> Compiled<'a> {
         true
     }
 
+    /// The hashes every matching block's sized filter must contain.
+    fn hashes(&self) -> Vec<u64> {
+        let mut v = Vec::new();
+        if let Some(Some(h)) = self.key_hash {
+            v.push(h);
+        }
+        v.extend(self.kv_hash);
+        v
+    }
+
     fn has_tag_filter(&self) -> bool {
         self.f.key.is_some()
     }
@@ -540,6 +550,10 @@ impl Reader {
         out.extend(self.query_tree(TREE_LARGE, &pred)?.into_iter().filter(|&no| {
             self.block_entry(no).map(|e| tree_types[e.obj_type as usize]).unwrap_or(false)
         }));
+        let hashes = c.hashes();
+        if !hashes.is_empty() {
+            out.retain(|&no| self.block_may_contain(no, &hashes));
+        }
         // Private nodes live in way blocks without tags: bloom must not prune them.
         if tree_types[0] && c.f.include_private_nodes && !c.has_tag_filter() && !tree_types[1] {
             out.extend(self.query_tree(ObjType::Way as usize, &pred_nobloom)?);

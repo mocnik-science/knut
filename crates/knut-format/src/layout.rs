@@ -21,7 +21,9 @@ pub const FEAT_USERS: u64 = 1 << 1;
 pub const FEAT_USERS_STRIPPED: u64 = 1 << 2;
 pub const FEAT_UIDS_PSEUDONYMIZED: u64 = 1 << 3;
 pub const FEAT_ZSTD_DICT: u64 = 1 << 4;
-pub const FEAT_KNOWN: u64 = 0x1f;
+/// A filter per block, sized to its tags (section `BlockBlooms`).
+pub const FEAT_BLOCK_BLOOMS: u64 = 1 << 5;
+pub const FEAT_KNOWN: u64 = 0x3f;
 /// Feature bits at or above this position are incompatible if unknown.
 pub const FEAT_INCOMPATIBLE_MASK: u64 = !0xffff_ffff;
 
@@ -44,6 +46,7 @@ pub enum SectionKind {
     IdxWay = 12,
     IdxRel = 13,
     Meta = 14,
+    BlockBlooms = 15,
 }
 
 impl SectionKind {
@@ -64,6 +67,7 @@ impl SectionKind {
             12 => IdxWay,
             13 => IdxRel,
             14 => Meta,
+            15 => BlockBlooms,
             _ => return None,
         })
     }

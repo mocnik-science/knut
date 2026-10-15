@@ -2,7 +2,7 @@
 //! of an isochrone.
 
 use crate::geom::{self, BBoxF, Geom, P, Polygon};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +39,99 @@ impl Raster {
 
     pub fn contains(&self, p: P) -> bool {
         self.cells.contains(&self.cell_of(p))
+    }
+
+    /// The cells merged into polygons (outer rings counter-clockwise, holes clockwise), so that a
+    /// map draws the border of the region instead of the border of every cell.
+    pub fn outline(&self) -> Vec<Polygon> {
+        type V = (i32, i32);
+        // the cell borders that are not shared, directed so that the cell lies to the left
+        let mut next: FxHashMap<V, Vec<V>> = Default::default();
+        for &(x, y) in &self.cells {
+            let free = |dx, dy| !self.cells.contains(&(x + dx, y + dy));
+            let mut edge = |a: V, b: V| next.entry(a).or_default().push(b);
+            if free(0, -1) {
+                edge((x, y), (x + 1, y));
+            }
+            if free(1, 0) {
+                edge((x + 1, y), (x + 1, y + 1));
+            }
+            if free(0, 1) {
+                edge((x + 1, y + 1), (x, y + 1));
+            }
+            if free(-1, 0) {
+                edge((x, y + 1), (x, y));
+            }
+        }
+        // chain the borders into rings; where two cells touch only at a corner, turn left, which
+        // keeps them apart
+        let mut rings: Vec<Vec<V>> = Vec::new();
+        let starts: Vec<V> = {
+            let mut v: Vec<V> = next.keys().copied().collect();
+            v.sort_unstable();
+            v
+        };
+        for start in starts {
+            while next.get(&start).is_some_and(|v| !v.is_empty()) {
+                let mut ring = vec![start];
+                let (mut prev, mut cur) = (start, next.get_mut(&start).unwrap().pop().unwrap());
+                while cur != start {
+                    let outs = next.get_mut(&cur).expect("closed border");
+                    let d = (cur.0 - prev.0, cur.1 - prev.1);
+                    let left = (cur.0 - d.1, cur.1 + d.0);
+                    let i = outs.iter().position(|&o| o == left).unwrap_or(0);
+                    let n = outs.swap_remove(i);
+                    // only the corners
+                    let d2 = (n.0 - cur.0, n.1 - cur.1);
+                    if d2 != d {
+                        ring.push(cur);
+                    }
+                    (prev, cur) = (cur, n);
+                }
+                // the start is a corner unless the ring arrives in its own direction
+                let d_in = (start.0 - prev.0, start.1 - prev.1);
+                let d_out = (ring.get(1).copied().unwrap_or(start).0 - start.0, ring.get(1).copied().unwrap_or(start).1 - start.1);
+                if ring.len() > 1 && d_in.0 * d_out.1 == d_in.1 * d_out.0 && d_in.0 * d_out.0 + d_in.1 * d_out.1 > 0 {
+                    ring.remove(0);
+                }
+                rings.push(ring);
+            }
+        }
+        let area2 = |r: &[V]| -> i64 {
+            (0..r.len()).map(|i| {
+                let (a, b) = (r[i], r[(i + 1) % r.len()]);
+                a.0 as i64 * b.1 as i64 - b.0 as i64 * a.1 as i64
+            }).sum()
+        };
+        let (outers, holes): (Vec<Vec<V>>, Vec<Vec<V>>) = rings.into_iter().partition(|r| area2(r) > 0);
+        // a hole belongs to the smallest outer ring around the cell next to its first border
+        let inside = |r: &[V], p: (f64, f64)| {
+            let mut c = false;
+            for i in 0..r.len() {
+                let (a, b) = (r[i], r[(i + 1) % r.len()]);
+                let (ax, ay, bx, by) = (a.0 as f64, a.1 as f64, b.0 as f64, b.1 as f64);
+                if (ay > p.1) != (by > p.1) && p.0 < ax + (p.1 - ay) / (by - ay) * (bx - ax) {
+                    c = !c;
+                }
+            }
+            c
+        };
+        let mut polys: Vec<(Vec<V>, Vec<Vec<V>>)> = outers.into_iter().map(|o| (o, vec![])).collect();
+        for h in holes {
+            let (a, b) = (h[0], h[1 % h.len()]);
+            let d = ((b.0 - a.0).signum(), (b.1 - a.1).signum());
+            let p = (a.0 as f64 + 0.5 * d.0 as f64 - 0.5 * d.1 as f64, a.1 as f64 + 0.5 * d.1 as f64 + 0.5 * d.0 as f64);
+            if let Some(i) = (0..polys.len()).filter(|&i| inside(&polys[i].0, p)).min_by_key(|&i| area2(&polys[i].0)) {
+                polys[i].1.push(h);
+            }
+        }
+        let (kx, ky) = (self.kx(), Raster::ky());
+        let to_deg = |r: &[V]| -> Vec<P> {
+            let mut v: Vec<P> = r.iter().map(|&(x, y)| (self.lon0 + x as f64 * self.size / kx, self.lat0 + y as f64 * self.size / ky)).collect();
+            v.push(v[0]);
+            v
+        };
+        polys.iter().map(|(o, hs)| Polygon { outer: to_deg(o), holes: hs.iter().map(|h| to_deg(h)).collect() }).collect()
     }
 
     /// Adds the cells enclosed by marked cells (blocks surrounded by reachable streets):
@@ -191,6 +284,15 @@ impl Region {
         }
     }
 
+    /// Geometry for maps: an isochrone as its outline instead of single cells.
+    pub fn display_geom(&self) -> Geom {
+        match self {
+            Region::Raster(r) => Geom::Poly(r.outline()),
+            Region::Union(rs, _, _) => Geom::Multi(rs.iter().map(|r| r.display_geom()).collect()),
+            _ => self.geom(),
+        }
+    }
+
     /// Geometry for distance computations.
     pub fn geom(&self) -> Geom {
         match self {
@@ -232,4 +334,49 @@ fn polygon_edges_cross_box(g: &Geom, b: &BBoxF) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raster(cells: &[(i32, i32)]) -> Raster {
+        Raster { lon0: 0.0, lat0: 0.0, size: Raster::ky(), cells: cells.iter().copied().collect(), bbox: BBoxF::WORLD }
+    }
+
+    /// Rings in cell units, without the closing point.
+    fn rings(r: &Raster) -> Vec<(Vec<(i32, i32)>, usize)> {
+        let k = r.kx() / r.size;
+        let cell = |p: &P| ((p.0 * k).round() as i32, p.1.round() as i32);
+        let mut v: Vec<_> = r
+            .outline()
+            .iter()
+            .map(|p| (p.outer[..p.outer.len() - 1].iter().map(cell).collect::<Vec<_>>(), p.holes.len()))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn outline_merges_cells_into_one_ring_of_corners() {
+        // an L of three cells: six corners, counter-clockwise
+        let r = raster(&[(0, 0), (1, 0), (0, 1)]);
+        let rs = rings(&r);
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs[0].0.len(), 6, "{rs:?}");
+        assert_eq!(rs[0].1, 0);
+    }
+
+    #[test]
+    fn outline_keeps_holes_and_separates_corner_neighbours() {
+        // a ring of eight cells around a hole
+        let ring: Vec<_> = (0..3).flat_map(|x| (0..3).map(move |y| (x, y))).filter(|&c| c != (1, 1)).collect();
+        let rs = rings(&raster(&ring));
+        assert_eq!(rs.len(), 1);
+        assert_eq!((rs[0].0.len(), rs[0].1), (4, 1), "{rs:?}");
+        // two cells touching at a corner: two squares
+        let rs = rings(&raster(&[(0, 0), (1, 1)]));
+        assert_eq!(rs.len(), 2);
+        assert!(rs.iter().all(|r| r.0.len() == 4 && r.1 == 0), "{rs:?}");
+    }
 }

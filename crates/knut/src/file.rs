@@ -4,7 +4,7 @@ use crate::cache::BlockCache;
 use crate::{Error, Result, corrupt};
 use memmap2::Mmap;
 use knut_format::block::{self, DecodeDicts, DecodeOptions, SegDir};
-use knut_format::bloom::Bloom;
+use knut_format::bloom::{self, Bloom};
 use knut_format::codec::{get_varint, le, unzigzag};
 use knut_format::layout::*;
 use knut_format::strings::decode_strings;
@@ -114,6 +114,8 @@ pub struct Reader {
     rnodes_off: usize,
     blooms_off: usize,
     rnodes_total: usize,
+    /// BlockBlooms section: absolute offsets of the word offsets and of the words.
+    block_blooms: Option<(usize, usize)>,
     idx: [IdIndex; 3],
     cache: BlockCache,
     verify_checksums: bool,
@@ -199,6 +201,20 @@ impl Reader {
         let rnodes_off = rt_sec.offset as usize + 8 + 16 * N_TREES;
         let blooms_off = rnodes_off + total * RNODE_SIZE;
         le::slice(buf, rnodes_off, total * (RNODE_SIZE + BLOOM_SIZE))?;
+        let block_blooms = match header.section(SectionKind::BlockBlooms) {
+            Some(s) if header.features & FEAT_BLOCK_BLOOMS != 0 => {
+                let b = sec(SectionKind::BlockBlooms)?;
+                if le::u32(b, 0)? as usize != n_blocks {
+                    return Err(corrupt("block filter count"));
+                }
+                let offs = 8;
+                let words = (offs + 4 * (n_blocks + 1)).div_ceil(8) * 8;
+                let n_words = le::u32(b, offs + 4 * n_blocks)? as usize;
+                le::slice(b, words, 8 * n_words)?;
+                Some((s.offset as usize + offs, s.offset as usize + words))
+            }
+            _ => None,
+        };
         let mut idx = [IdIndex { off: 0, len: 0, n_entries: 0, n_chunks: 0, table: 0, payload: 0 }; 3];
         for t in ObjType::ALL {
             let s = header.section(SectionKind::idx(t)).ok_or_else(|| corrupt("missing id index"))?;
@@ -230,6 +246,7 @@ impl Reader {
             rnodes_off,
             blooms_off,
             rnodes_total: total,
+            block_blooms,
             idx,
             cache: BlockCache::new(opt.cache_blocks),
             verify_checksums: opt.verify_checksums,
@@ -448,6 +465,18 @@ impl Reader {
         let n = RNode::parse(self.buf(), self.rnodes_off + abs * RNODE_SIZE)?;
         let b = parse_bloom(self.buf(), self.blooms_off + abs * BLOOM_SIZE)?;
         Ok((n, b))
+    }
+
+    /// Whether block `no` may contain all of `hashes` (keys and key=value pairs, see
+    /// [`knut_format::bloom`]): its sized filter, or true for files without one.
+    pub fn block_may_contain(&self, no: u32, hashes: &[u64]) -> bool {
+        let Some((offs, words)) = self.block_blooms else { return true };
+        let buf = self.buf();
+        let (Ok(a), Ok(b)) = (le::u32(buf, offs + 4 * no as usize), le::u32(buf, offs + 4 * (no as usize + 1))) else {
+            return true;
+        };
+        let Ok(w) = le::slice(buf, words + 8 * a as usize, 8 * (b.saturating_sub(a)) as usize) else { return true };
+        hashes.iter().all(|&h| bloom::block_test(w, h))
     }
 
     /// Returns all leaf block numbers of `tree` whose path satisfies `pred`.
@@ -698,6 +727,20 @@ impl Reader {
                     for s in &segs {
                         if !s.bbox.is_empty() && !f.header.bbox.intersects(&s.bbox) {
                             return Err(corrupt(format!("block {no}: segment bbox outside block bbox")));
+                        }
+                        // the block's filter knows every key and key=value pair of the dictionaries
+                        let tags: Vec<&Tags> = match &s.body {
+                            SegmentBody::Node(v) => v.iter().map(|v| &v.tags).collect(),
+                            SegmentBody::Way { versions, .. } => versions.iter().map(|v| &v.tags).collect(),
+                            SegmentBody::Relation(v) => v.iter().map(|v| &v.tags).collect(),
+                        };
+                        for (k, v) in tags.into_iter().flat_map(|t| t.iter()) {
+                            let Some(kid) = self.key_id(k) else { continue };
+                            let mut hs = vec![bloom::hash_key(kid)];
+                            hs.extend(self.value_id(v).map(|vid| bloom::hash_kv(kid, vid)));
+                            if !self.block_may_contain(no, &hs) {
+                                return Err(corrupt(format!("block {no}: filter misses {k}={v}")));
+                            }
                         }
                     }
                     Ok((segs.len() as u64, segs.iter().map(|s| s.body.n_versions() as u64).sum()))

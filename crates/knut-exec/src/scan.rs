@@ -130,6 +130,10 @@ pub fn blocks(db: &Db, spec: &ScanSpec) -> R<Vec<u32>> {
         out.extend(r.query_tree(TREE_LARGE, &pred).map_err(rt_err)?.into_iter().filter(|&no| {
             r.block_entry(no).map(|e| spec.kinds.visits(e.obj_type)).unwrap_or(false)
         }));
+        // the sized filter of each block, far more selective than the tree's
+        if !hashes.is_empty() {
+            out.retain(|&no| r.block_may_contain(no, hashes));
+        }
     }
     if private {
         let pred = |n: &RNode, _: &Bloom| -> bool { n.bbox.intersects(&rb) && n.tmin <= t1 && t0 <= n.tmax };

@@ -68,6 +68,8 @@ pub struct RawBlock {
     pub tmin: u32,
     pub tmax: u32,
     pub bloom: Bloom,
+    /// Distinct key and key=value hashes of the block, for its sized filter.
+    pub hashes: Vec<u64>,
     pub large: bool,
 }
 
@@ -177,6 +179,7 @@ struct Enc<'s, 'd> {
     tagsets: HashMap<Vec<(u64, u64)>, u32>,
     tagset_list: Vec<Vec<(u64, u64)>>,
     bloom: Bloom,
+    hashes: Vec<u64>,
     uids: Vec<u32>,
     /// (changeset, uid) -> (table index, base timestamp)
     cs_index: HashMap<(u64, u32), (u32, i64)>,
@@ -239,8 +242,10 @@ impl<'s, 'd> Enc<'s, 'd> {
             if kr & 1 == 0 {
                 let kid = (kr >> 1) as u32;
                 bloom::add(&mut self.bloom, bloom::hash_key(kid));
+                self.hashes.push(bloom::hash_key(kid));
                 if vr & 1 == 0 {
                     bloom::add(&mut self.bloom, bloom::hash_kv(kid, (vr >> 1) as u32));
+                    self.hashes.push(bloom::hash_kv(kid, (vr >> 1) as u32));
                 }
             }
         }
@@ -335,6 +340,7 @@ pub fn encode_block(segs: &[Segment], dicts: &dyn EncodeDicts, opt: &EncodeOptio
         tagsets: HashMap::default(),
         tagset_list: Vec::new(),
         bloom: [0; bloom::BLOOM_WORDS],
+        hashes: Vec::new(),
         uids,
         cs_index,
         c_ver: Vec::new(),
@@ -557,6 +563,12 @@ pub fn encode_block(segs: &[Segment], dicts: &dyn EncodeDicts, opt: &EncodeOptio
         tmin,
         tmax,
         bloom: e.bloom,
+        hashes: {
+            let mut h = e.hashes;
+            h.sort_unstable();
+            h.dedup();
+            h
+        },
         large,
     })
 }

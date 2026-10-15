@@ -151,7 +151,7 @@ impl Builder<'_> {
             Value::Region(r) => {
                 let mut p = Map::new();
                 p.insert("@label".into(), json!(v.display()));
-                self.push(&r.geom(), p);
+                self.push(&r.display_geom(), p);
             }
             Value::Path(p) => {
                 let mut m = Map::new();
@@ -179,7 +179,7 @@ impl Builder<'_> {
         for k in keys {
             let g = match k {
                 Value::Elem(e) => Some((*self.ctx.elem_geom(e)).clone()),
-                Value::Region(r) => Some(r.geom()),
+                Value::Region(r) => Some(r.display_geom()),
                 Value::Text(t) => tile_polygon(t),
                 _ => None,
             };
