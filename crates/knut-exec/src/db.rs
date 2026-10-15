@@ -21,6 +21,12 @@ pub struct Db {
     names: OnceLock<HashMap<u32, Str>>,
 }
 
+impl std::fmt::Debug for Db {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Db").field("path", &self.path).finish()
+    }
+}
+
 pub type Pos = Option<(i32, i32)>;
 
 /// Index of the last version with timestamp ≤ t (including continuation records).
@@ -54,6 +60,52 @@ impl Db {
             names: OnceLock::new(),
             reader,
         })
+    }
+
+    /// Where most of the data lies, for a first map view. History extracts also contain
+    /// objects that once lay far away: they blow up the extent and form small blocks of
+    /// their own. So every node block counts with its number of objects, sprawling blocks
+    /// are left out, and of the centres the weighted 5th to 95th percentiles are taken.
+    pub fn focus(&self) -> BBoxF {
+        let r = &self.reader;
+        let mut blocks = Vec::new();
+        for no in 0..r.n_blocks() as u32 {
+            let Ok(e) = r.block_entry(no) else { continue };
+            if e.obj_type != knut_format::ObjType::Node {
+                continue;
+            }
+            let Ok(h) = r.block_header(no) else { continue };
+            let b = BBoxF::from_e7(&h.bbox);
+            if !b.is_empty() {
+                blocks.push((b, h.n_segments as f64));
+            }
+        }
+        if blocks.len() < 3 {
+            return self.extent;
+        }
+        let size = |b: &BBoxF| (b.maxx - b.minx) * (b.maxy - b.miny);
+        let mut sizes: Vec<f64> = blocks.iter().map(|x| size(&x.0)).collect();
+        sizes.sort_by(f64::total_cmp);
+        let limit = sizes[sizes.len() / 2] * 100.0 + 1e-6;
+        blocks.retain(|x| size(&x.0) <= limit);
+        let quantiles = |mut v: Vec<(f64, f64)>| -> (f64, f64) {
+            v.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let total: f64 = v.iter().map(|x| x.1).sum();
+            let at = |p: f64| {
+                let mut acc = 0.0;
+                for x in &v {
+                    acc += x.1;
+                    if acc >= p * total {
+                        return x.0;
+                    }
+                }
+                v.last().map_or(0.0, |x| x.0)
+            };
+            (at(0.05), at(0.95))
+        };
+        let (minx, maxx) = quantiles(blocks.iter().map(|(b, w)| (b.center().0, *w)).collect());
+        let (miny, maxy) = quantiles(blocks.iter().map(|(b, w)| (b.center().1, *w)).collect());
+        BBoxF { minx, miny, maxx, maxy }
     }
 
     pub fn rel(&self, t: i64) -> u32 {

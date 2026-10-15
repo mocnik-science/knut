@@ -7,6 +7,7 @@ members = [
     "crates/knut-lang",
     "crates/knut-plan",
     "crates/knut-exec",
+    "crates/knut-web",
     "crates/knut-cli",
     "crates/knut-py",
 ]
@@ -18,6 +19,7 @@ default-members = [
     "crates/knut-lang",
     "crates/knut-plan",
     "crates/knut-exec",
+    "crates/knut-web",
     "crates/knut-cli",
 ]
 
@@ -34,6 +36,7 @@ knut = { path = "crates/knut" }
 knut-lang = { path = "crates/knut-lang" }
 knut-plan = { path = "crates/knut-plan" }
 knut-exec = { path = "crates/knut-exec" }
+knut-web = { path = "crates/knut-web" }
 thiserror = "2"
 rustc-hash = "2"
 anyhow = "1"

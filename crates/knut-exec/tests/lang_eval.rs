@@ -305,12 +305,16 @@ fn tag_values_as_numbers() {
 }
 
 #[test]
-fn data_errors_stop_and_can_be_caught() {
-    let r = fails("ignore_warnings = true\ncount of nodes s with s:amenity=shelter and s:capacity > 10", "E602");
-    assert_eq!(r.code, 2);
-    assert!(r.err.contains("capacity=\"about 200\""), "{}", r.err);
-    // capacity has no default unit
-    let r = fails("ignore_warnings = true\ncount of nodes s with s:amenity=shelter and s:capacity > 10 m", "E304");
+fn values_that_are_not_numbers_count_as_missing() {
+    // shelter 701 has capacity="about 200": the comparison is false, without a message
+    let r = run_text("count of nodes s with s:amenity=shelter and s:capacity > 10");
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(r.out.contains("\n1\n"), "{}", r.out);
+    assert!(r.err.trim().is_empty(), "{}", r.err);
+    // in arithmetic such a value gives none
+    assert_eq!(one("(the s in (nodes x with x:amenity=shelter) with s.id == 701):capacity * 2"), J::Null);
+    // capacity has no default unit: comparing it with a length is still an error
+    let r = fails("count of nodes s with s:amenity=shelter and s:capacity > 10 m", "E304");
     assert_eq!(r.code, 2);
 }
 

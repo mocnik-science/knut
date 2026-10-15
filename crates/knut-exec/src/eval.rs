@@ -37,6 +37,7 @@ pub struct Ctx {
     pub w001: Vec<AtomicU64>,
     w001_idx: HashMap<Span, usize>,
     pub caches: crate::cache::Caches,
+    pub control: Option<Arc<crate::control::Control>>,
 }
 
 pub fn cap(s: &str) -> String {
@@ -63,6 +64,102 @@ impl Ctx {
             w001: chk.w001.iter().map(|_| AtomicU64::new(0)).collect(),
             w001_idx,
             caches: Default::default(),
+            control: None,
+        }
+    }
+
+    /// A comparison. A value that is not a number where numbers are compared
+    /// (`maxspeed=none`) counts as missing: the comparison is false, without a message.
+    fn compare_or_false(&self, _span: Span, op: CmpOp, a: &Value, b: &Value, ea: &'static Expr, eb: &'static Expr) -> R<bool> {
+        match crate::arith::compare(self, op, a, b, ea, eb) {
+            Err(err) if err.diag.code == "E602" => Ok(false),
+            r => r,
+        }
+    }
+
+    /// Prepares what conditions evaluated for every element need and that does not depend
+    /// on the element: the sets after `near … in` (with their spatial index) and regions
+    /// after `within`. Errors are left to the real evaluation.
+    pub(crate) fn warm_up(&self, preds: &[&'static Expr], sc: &Sc) {
+        for p in preds {
+            walk_static(p, &mut |x| {
+                let target: Option<&'static Expr> = match &x.kind {
+                    ExprKind::Rel(_, RelTail::Near { set, .. }) => Some(set),
+                    ExprKind::Rel(_, RelTail::Within(r)) | ExprKind::Rel(_, RelTail::Overlapping(r)) | ExprKind::Rel(_, RelTail::In(r)) => Some(r),
+                    _ => None,
+                };
+                let Some(t) = target else { return };
+                if !self.closed(t) {
+                    return;
+                }
+                let v = match &t.kind {
+                    ExprKind::Select(_) | ExprKind::Of { .. } => self.once(t, || self.eval(t, sc)),
+                    _ => self.eval(t, sc),
+                };
+                if let Ok(Value::Set(s)) = v
+                    && matches!(&x.kind, ExprKind::Rel(_, RelTail::Near { .. }))
+                {
+                    let _ = crate::spatial::geo_index(self, &s, t.span);
+                }
+            });
+        }
+    }
+
+    /// The value of a closed sub-expression, computed once.
+    fn once(&self, e: &'static Expr, f: impl FnOnce() -> R<Value>) -> R<Value> {
+        if let Some(v) = lock(&self.caches.consts).get(&e.span) {
+            return Ok(v.clone());
+        }
+        let v = f()?;
+        lock(&self.caches.consts).insert(e.span, v.clone());
+        Ok(v)
+    }
+
+    /// True if `e` uses no variable bound outside of it (only globals and its own variables).
+    fn closed(&self, e: &'static Expr) -> bool {
+        if let Some(&c) = lock(&self.caches.closed).get(&e.span) {
+            return c;
+        }
+        let mut bound: Vec<String> = Vec::new();
+        let mut has_near = false;
+        e.walk(&mut |x| match &x.kind {
+            ExprKind::Select(s) => bound.extend(s.pattern.iter().map(|p| p.var.clone())),
+            ExprKind::Lambda(ps, _) => bound.extend(ps.iter().cloned()),
+            ExprKind::Quantified { var, .. } => bound.push(var.clone()),
+            ExprKind::Of { operand, .. } => {
+                if let OfOperand::Iter { var, .. } = operand {
+                    bound.push(var.clone());
+                }
+                if let Some(vs) = self.chk.clause_vars.get(&x.span) {
+                    bound.extend(vs.iter().cloned());
+                }
+            }
+            ExprKind::Special(sp) => match &**sp {
+                Special::Path { var, .. } | Special::Isochrone { var, .. } => bound.push(var.clone()),
+                _ => {}
+            },
+            ExprKind::Rel(_, RelTail::Near { .. }) => has_near = true,
+            _ => {}
+        });
+        let mut free = false;
+        e.walk(&mut |x| match &x.kind {
+            ExprKind::Ident(n) => match self.chk.idents.get(&x.span) {
+                Some(IdentRes::Local(_)) => free |= !bound.iter().any(|b| b == n),
+                Some(IdentRes::ImplicitField(_)) | Some(IdentRes::Projection { .. }) => free = true,
+                _ => {}
+            },
+            ExprKind::Underscore => free |= !has_near,
+            _ => {}
+        });
+        lock(&self.caches.closed).insert(e.span, !free);
+        !free
+    }
+
+    /// E902 if the run was cancelled.
+    pub fn check_cancel(&self) -> R<()> {
+        match &self.control {
+            Some(c) if c.is_cancelled() => Err(cancelled()),
+            _ => Ok(()),
         }
     }
 
@@ -237,7 +334,11 @@ impl Ctx {
             ExprKind::Bin(op, a, b) => {
                 let va = self.eval(a, sc)?;
                 let vb = self.eval(b, sc)?;
-                crate::arith::binop(self, *op, va, vb, a, b, e)
+                // a value that is not a number counts as missing
+                match crate::arith::binop(self, *op, va, vb, a, b, e) {
+                    Err(err) if err.diag.code == "E602" => Ok(Value::None),
+                    r => r,
+                }
             }
             ExprKind::And(a, b) => Ok(Value::Bool(self.truthy(a, sc)? && self.truthy(b, sc)?)),
             ExprKind::Or(a, b) => Ok(Value::Bool(self.truthy(a, sc)? || self.truthy(b, sc)?)),
@@ -261,7 +362,13 @@ impl Ctx {
             },
             ExprKind::Rel(l, t) => self.rel(e, l, t, sc),
             ExprKind::Lambda(ps, body) => Ok(Value::Lambda(Arc::new(Closure { params: ps.clone(), body, scope: sc.clone() }))),
+            // inside a condition or a function, a selection that does not use the element
+            // is the same for every element: evaluate it once
+            ExprKind::Select(s) if sc.is_some() && self.closed(e) => self.once(e, || self.select(e, s, sc)),
             ExprKind::Select(s) => self.select(e, s, sc),
+            ExprKind::Of { func, func_span, operand, clauses } if sc.is_some() && self.closed(e) => {
+                self.once(e, || crate::agg::of_call(self, e, *func, *func_span, operand, clauses, sc))
+            }
             ExprKind::Quantified { q, kind, var, set, pred, cond, .. } => self.quantified(e, *q, *kind, var, set, pred.as_deref(), cond.as_deref(), sc),
             ExprKind::Of { func, func_span, operand, clauses } => crate::agg::of_call(self, e, *func, *func_span, operand, clauses, sc),
             ExprKind::Special(s) => crate::special::eval(self, e, s, sc),
@@ -628,7 +735,7 @@ impl Ctx {
                     self.w001_hit(e.span);
                     return Ok(Value::Bool(false));
                 }
-                Ok(Value::Bool(crate::arith::compare(self, *op, &a, &b, l, r)?))
+                Ok(Value::Bool(self.compare_or_false(e.span, *op, &a, &b, l, r)?))
             }
             RelTail::In(r) => {
                 let a = self.eval(l, sc)?;
@@ -667,10 +774,10 @@ impl Ctx {
                     return Ok(Value::Bool(false));
                 }
                 // inclusive range; spans include their whole extent
-                let lo_ok = crate::arith::compare(self, CmpOp::Ge, &x, &start_of(&lo), l, a)?;
+                let lo_ok = self.compare_or_false(e.span, CmpOp::Ge, &x, &start_of(&lo), l, a)?;
                 let hi_ok = match &hi {
-                    Value::Time(d) if d.prec != Precision::Instant => crate::arith::compare(self, CmpOp::Lt, &x, &Value::instant(d.end), l, b)?,
-                    _ => crate::arith::compare(self, CmpOp::Le, &x, &hi, l, b)?,
+                    Value::Time(d) if d.prec != Precision::Instant => self.compare_or_false(e.span, CmpOp::Lt, &x, &Value::instant(d.end), l, b)?,
+                    _ => self.compare_or_false(e.span, CmpOp::Le, &x, &hi, l, b)?,
                 };
                 Ok(Value::Bool(lo_ok && hi_ok))
             }
@@ -1295,5 +1402,18 @@ fn way_geom(kind: EKind, pos: &[Option<geom::P>]) -> Geom {
         Geom::Poly(vec![geom::Polygon { outer: ring, holes: vec![] }])
     } else {
         Geom::Line(pts)
+    }
+}
+
+/// The error of a cancelled run.
+pub fn cancelled() -> RtErr {
+    RtErr::fatal(Diagnostic::error("E902", Span::default(), Text2::new("The run was cancelled.", "Der Lauf wurde abgebrochen.")))
+}
+
+/// Visits `e` and all its sub-expressions, keeping their `'static` lifetime.
+fn walk_static(e: &'static Expr, f: &mut dyn FnMut(&'static Expr)) {
+    f(e);
+    for c in e.children() {
+        walk_static(c, f);
     }
 }

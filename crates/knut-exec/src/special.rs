@@ -367,7 +367,7 @@ pub fn all_keys(ctx: &Ctx, t: i64, _span: Span) -> R<Value> {
         need_hist: false,
     };
     type Acc = HashMap<Arc<str>, (u64, HashSet<u64>)>;
-    let parts = scan::fold(db, &spec, &Acc::default, &|acc: &mut Acc, it: Item| {
+    let parts = scan::fold(db, ctx.control.as_deref(), &spec, &Acc::default, &|acc: &mut Acc, it: Item| {
         if let Item::Elem(e) = it {
             for (k, v) in e.v.tags.iter() {
                 let ent = acc.entry(k.clone()).or_default();

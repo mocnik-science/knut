@@ -56,7 +56,7 @@ fn lookup(ctx: &Ctx, name: &str, span: Span) -> R<Value> {
     };
     let lname = name.to_lowercase();
     let all_names: Mutex<Vec<String>> = Mutex::new(Vec::new());
-    let parts = scan::fold(db, &spec, &Vec::new, &|acc: &mut Vec<Cand>, it: Item| {
+    let parts = scan::fold(db, ctx.control.as_deref(), &spec, &Vec::new, &|acc: &mut Vec<Cand>, it: Item| {
         let Item::Elem(e) = it else { return Ok(()) };
         if !crate::areas::relation_is_area(&e.v.tags) && e.tag("boundary").is_none() {
             return Ok(());

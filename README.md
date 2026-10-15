@@ -2,7 +2,7 @@
 
 > *knut* is short for *knutpunkt*, the Swedish word for ‘junction’ or ‘node’, which is the building blocks of OpenStreetMap data.
 
-This software reads OpenStreetMap PBF files (with history) and converts them into its own compact, high-performance data format, which enables fast queries of OpenStreetMap data in Rust, on the command line, and in Python.
+This software reads OpenStreetMap PBF files (with history) and converts them into its own compact, high-performance data format, which enables fast queries of OpenStreetMap data in Rust, on the command line, in Python, and in a web interface.
 
 ## Overview
 
@@ -110,6 +110,12 @@ db.way_geometry_at(4040158, "2020-01-01")
 ```
 
 Columns of the result tables.  Long scans release the GIL.
+
+## Web
+
+```bash
+knut web --db data/knut/bremen.knutdb
+```
 
 ## Tests
 

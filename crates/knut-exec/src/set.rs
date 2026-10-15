@@ -105,13 +105,19 @@ impl SetV {
         let mut all: Vec<Value> = parts.into_iter().flatten().collect();
         all.par_sort_by_key(|x| x.key());
         all.dedup_by(|a, b| a.key() == b.key());
-        let v = Arc::new(all);
-        let _ = self.mat.set(v.clone());
-        Ok(v)
+        // if another thread finished first, its (equal) result is kept
+        let _ = self.mat.set(Arc::new(all));
+        Ok(self.mat.get().expect("set").clone())
     }
 
     /// Parallel fold; accumulators come back in a deterministic order.
     pub fn fold<A: Send>(&self, ctx: &Ctx, hints: Hints, init: &(dyn Fn() -> A + Sync), step: &(dyn Fn(&mut A, Value) -> R<()> + Sync)) -> R<Vec<A>> {
+        // with a controller, every element checks for cancellation (one atomic load)
+        let checked = |a: &mut A, v: Value| -> R<()> {
+            ctx.check_cancel()?;
+            step(a, v)
+        };
+        let step: &(dyn Fn(&mut A, Value) -> R<()> + Sync) = if ctx.control.is_some() { &checked } else { step };
         if let Some(v) = self.mat.get() {
             return fold_vec(v, init, step);
         }
@@ -237,5 +243,8 @@ fn fold_query<A: Send>(ctx: &Ctx, q: &Query, hints: Hints, init: &(dyn Fn() -> A
             },
         }
     };
-    scan::fold(db, &spec, init, &wrapped)
+    // sets and indexes the conditions need for every element are prepared here, before
+    // the parallel scan (preparing them inside it would compute them many times at once)
+    ctx.warm_up(&q.preds, &q.scope);
+    scan::fold(db, ctx.control.as_deref(), &spec, init, &wrapped)
 }

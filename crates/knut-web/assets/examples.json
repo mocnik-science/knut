@@ -1,0 +1,602 @@
+[
+ {
+  "category": "Basics",
+  "title": "Count benches",
+  "description": "Counts all benches as they are at the end of the data.",
+  "code": "count of nodes n with n:amenity=bench"
+ },
+ {
+  "category": "Basics",
+  "title": "Show benches on the map",
+  "description": "Lists every bench; points appear on the map and click on one for its tags.",
+  "code": "nodes n with n:amenity=bench"
+ },
+ {
+  "category": "Basics",
+  "title": "Libraries as areas",
+  "description": "Libraries mapped as closed ways or multipolygons, drawn as polygons.",
+  "code": "areas a with a:amenity=library"
+ },
+ {
+  "category": "Basics",
+  "title": "Every kind at once",
+  "description": "`*` selects nodes, ways, areas and relations; each object appears once.",
+  "code": "* x with x:amenity=library"
+ },
+ {
+  "category": "Basics",
+  "title": "Pick one element",
+  "description": "Without a number, `pick` returns a single element: the one with the smallest id.",
+  "code": "pick area a with a:amenity=library"
+ },
+ {
+  "category": "Basics",
+  "title": "Random sample",
+  "description": "Five benches chosen at random; the session seed (42 unless set) makes the choice repeatable.",
+  "code": "pick 5 nodes n randomly with n:amenity=bench"
+ },
+ {
+  "category": "Basics",
+  "title": "Random sample with own seed",
+  "description": "A different seed gives a different but again repeatable sample.",
+  "code": "pick 5 nodes n randomly using seed 7 with n:amenity=bench"
+ },
+ {
+  "category": "Basics",
+  "title": "Variables",
+  "description": "A name keeps a set for later lines; it is computed once, and only if it is used.",
+  "code": "benches = nodes n with n:amenity=bench\ncount of benches\nbenches"
+ },
+ {
+  "category": "Basics",
+  "title": "Several results in one line",
+  "description": "Commas separate outputs; each gets its own box on the right.",
+  "code": "count of nodes n with n:amenity=bench, count of nodes n with n:amenity=waste_basket"
+ },
+ {
+  "category": "Basics",
+  "title": "Comments",
+  "description": "Everything after `#` is a comment.",
+  "code": "# all post boxes\nnodes p with p:amenity=post_box"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Tag with a value",
+  "description": "`w:highway=residential` (no spaces) is short for `w:highway == 'residential'`.",
+  "code": "count of ways w with w:highway=residential"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Comparison with spaces",
+  "description": "With spaces, `==` compares; values may be quoted.",
+  "code": "count of ways w with w:highway == 'residential'"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Tag present",
+  "description": "A tag on its own is true when the element has it, whatever its value.",
+  "code": "count of nodes n with n:amenity=restaurant and n:name"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Tag missing",
+  "description": "`== none` is true when the tag is missing.",
+  "code": "count of nodes n with n:amenity=bench and n:backrest == none"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "One of several values",
+  "description": "`in` with a list tests several values at once.",
+  "code": "count of nodes s with s:shop in [bakery, butcher, greengrocer]"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "None of several values",
+  "description": "`not in` is false for elements without the tag, like `!=`.",
+  "code": "count of nodes s with s:shop not in [supermarket, convenience]"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "And, or, not",
+  "description": "Brackets group conditions.",
+  "code": "count of nodes n with (n:amenity=cafe or n:amenity=restaurant) and not n:wheelchair=no"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Keys with colons",
+  "description": "A tag key may contain colons.",
+  "code": "count of ways w with w:cycleway:right=lane"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Keys in brackets",
+  "description": "Brackets allow any key, also one with dots or computed from text.",
+  "code": "count of nodes n with n:['addr:city'] == 'Bremen'"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Numbers in tags",
+  "description": "Tag values become numbers where a number is expected; `?? 0` replaces missing and unreadable values.",
+  "code": "count of nodes s with s:amenity=bicycle_parking and (s:capacity ?? 0) > 20"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Text fields",
+  "description": "`.length` of a text counts its characters.",
+  "code": "average of (nodes n with n:amenity=restaurant and n:name).map(n => n:name.length)"
+ },
+ {
+  "category": "Tags and conditions",
+  "title": "Ranges",
+  "description": "`between … and` includes both ends.",
+  "code": "count of nodes n with n:amenity=bench and n.version between 2 and 5"
+ },
+ {
+  "category": "Units",
+  "title": "Speed limits",
+  "description": "`maxspeed` without a unit is read in km/h, as documented for OpenStreetMap; `??` handles values such as 'none'.",
+  "code": "count of ways w with w:highway and (w:maxspeed ?? 0 km/h) > 50 km/h"
+ },
+ {
+  "category": "Units",
+  "title": "Tall buildings",
+  "description": "`height` without a unit is read in metres.",
+  "code": "areas b with b:building and (b:height ?? 0 m) > 30 m"
+ },
+ {
+  "category": "Units",
+  "title": "Height from the number of levels",
+  "description": "Uses the height if there is one, otherwise three metres per level.",
+  "code": "average of (areas b with b:building and b:building:levels).map(b => b:height m ?? b:building:levels * 3 m)"
+ },
+ {
+  "category": "Units",
+  "title": "Converting units",
+  "description": "Units mix freely within one measure; the result has the unit of the left side.",
+  "code": "1 km + 300 m, 50 km/h > 30 mph, 2 ha > 15000 m2"
+ },
+ {
+  "category": "Units",
+  "title": "Large parks",
+  "description": "`.area` is the geodesic area in m²; compare it with any area unit.",
+  "code": "areas p with p:leisure=park and p.area > 2 ha"
+ },
+ {
+  "category": "Units",
+  "title": "Length of the cycleway network",
+  "description": "`.length` is the length of a way in metres.",
+  "code": "sum of (ways w with w:highway=cycleway).map(w => w.length)"
+ },
+ {
+  "category": "Time",
+  "title": "State at a date",
+  "description": "`on` gives every object as it was at that moment.",
+  "code": "count of nodes n with n:amenity=bench on 2015-01-01"
+ },
+ {
+  "category": "Time",
+  "title": "Other ways to write dates",
+  "description": "Dates can also be written with month names; a month or year stands for its start.",
+  "code": "count of nodes n with n:amenity=bench on 1 Mar 2018"
+ },
+ {
+  "category": "Time",
+  "title": "State every year",
+  "description": "`on each year` counts the state at the start of every year: a time series.",
+  "code": "count of nodes n with n:amenity=bench on each year from 2010 to 2024"
+ },
+ {
+  "category": "Time",
+  "title": "State every month",
+  "description": "The same per month.",
+  "code": "count of nodes s with s:shop on each month from 2022-01 to 2023-12"
+ },
+ {
+  "category": "Time",
+  "title": "Edits per year",
+  "description": "`from … to` selects versions (edits) instead of states; `per year` groups them by their time.",
+  "code": "count of nodes n with n:amenity=bench per year from 2010 to 2024"
+ },
+ {
+  "category": "Time",
+  "title": "Deletions",
+  "description": "Deleted versions appear among the edits of a period.",
+  "code": "count of nodes n with n.deleted from 2023 to 2023"
+ },
+ {
+  "category": "Time",
+  "title": "New benches",
+  "description": "Version 1 is the creation of an object.",
+  "code": "nodes n with n:amenity=bench and n.version == 1 from 2024 to 2024"
+ },
+ {
+  "category": "Time",
+  "title": "Edits per week",
+  "description": "Weeks are ISO weeks, starting on Monday.",
+  "code": "count of ways w with w:highway per week from 2024-01 to 2024-03"
+ },
+ {
+  "category": "Time",
+  "title": "Relative dates",
+  "description": "`… before` and `… after` shift a date.",
+  "code": "count of nodes n with n:amenity=bench on 365 days before 2024-01-01"
+ },
+ {
+  "category": "Time",
+  "title": "Not edited for a long time",
+  "description": "`.time` is the time of the version.",
+  "code": "count of nodes n with n:amenity=bench and n.time < 2015-01-01"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Changed tag value",
+  "description": "`.previous` is the version before; compares a tag across versions.",
+  "code": "count of ways w with w:highway and w.previous:highway != w:highway"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Pairs of versions",
+  "description": "`way A -> way B` gives every two consecutive versions of the same way.",
+  "code": "count of way A -> way B with A:highway != B:highway"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Edit wars",
+  "description": "Three versions within 30 days: one user's highway class was changed by another user and then restored.",
+  "code": "war = way A -> way B -> way C closer than 30 days with A.user == C.user and B.user != A.user and A:highway == C:highway and A:highway != B:highway\nwar"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Who was involved",
+  "description": "`war_B` projects the matches onto position B; `distinct of` removes duplicates.",
+  "code": "war = way A -> way B -> way C closer than 30 days with A.user == C.user and B.user != A.user and A:highway == C:highway and A:highway != B:highway\ndistinct of war_B.map(b => b.user)"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Renamed places",
+  "description": "Nodes whose name changed from one version to the next.",
+  "code": "node A -> node B with A:name != B:name and B:place"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Quick reverts",
+  "description": "A highway class changed and changed back within a day.",
+  "code": "way A -> way B -> way C closer than 1 days with A:highway == C:highway and A:highway != B:highway"
+ },
+ {
+  "category": "History and sequences",
+  "title": "All versions of an object",
+  "description": "`.versions` lists every version of an element.",
+  "code": "count of (pick way w with w:highway=motorway).versions"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Time since the previous edit",
+  "description": "`.unchangedBefore` is the time between a version and the one before.",
+  "code": "average of (nodes n with n:amenity=bench and n.version > 1).map(n => n.unchangedBefore)"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Tag added later",
+  "description": "Benches whose backrest tag was added in their latest edit.",
+  "code": "count of nodes n with n:amenity=bench and n.version > 1 and n:backrest and n.previous:backrest == none"
+ },
+ {
+  "category": "History and sequences",
+  "title": "Who mapped the benches",
+  "description": "`.creator` is the user of version 1; the distribution shows the most active ones first.",
+  "code": "distribution of (nodes n with n:amenity=bench).map(n => n.creator)"
+ },
+ {
+  "category": "Spatial",
+  "title": "Within a box",
+  "description": "A box is written as longitude range, latitude range.",
+  "code": "count of nodes n with n:amenity=bench within 8.78...8.84, 53.06...53.09"
+ },
+ {
+  "category": "Spatial",
+  "title": "Within a place",
+  "description": "Place names are looked up among the boundaries in the database (change the name for other areas).",
+  "code": "nodes n with n:amenity=bench within Vegesack"
+ },
+ {
+  "category": "Spatial",
+  "title": "Within as a condition",
+  "description": "`n within R` inside the condition means the same.",
+  "code": "count of nodes n with n:amenity=bench and n within Vegesack"
+ },
+ {
+  "category": "Spatial",
+  "title": "Outside a place",
+  "description": "`not within` excludes a region.",
+  "code": "count of nodes n with n:amenity=bench and n within Bremen and n not within Vegesack"
+ },
+ {
+  "category": "Spatial",
+  "title": "Near something",
+  "description": "Bicycle parking less than 50 m from a library (distances between the geometries).",
+  "code": "libraries = * l with l:amenity=library\nnodes b with b:amenity=bicycle_parking and b near some _ in libraries closer than 50 m"
+ },
+ {
+  "category": "Spatial",
+  "title": "Far from everything",
+  "description": "Benches without a waste basket within 50 m.",
+  "code": "baskets = nodes w with w:amenity=waste_basket\nnodes b with b:amenity=bench and b near no _ in baskets closer than 50 m within Vegesack"
+ },
+ {
+  "category": "Spatial",
+  "title": "Near, default distance",
+  "description": "Without `closer than`, `near` uses 100 m (setting `near_distance`).",
+  "code": "* b near some _ in (* s with s:amenity=school) with b:amenity=bench"
+ },
+ {
+  "category": "Spatial",
+  "title": "Nearest",
+  "description": "`nearest of S to x` is the closest element of S.",
+  "code": "schools = * s with s:amenity=school\n(pick 20 nodes n with n:amenity=bench).map(b => (nearest of schools to b):name)"
+ },
+ {
+  "category": "Spatial",
+  "title": "Within areas",
+  "description": "A set of areas works as a region.",
+  "code": "count of nodes n with n:amenity=bench within (areas p with p:leisure=park)"
+ },
+ {
+  "category": "Spatial",
+  "title": "Overlapping",
+  "description": "Buildings whose outline overlaps a given area.",
+  "code": "campus = pick area a with a:amenity=university\nareas b with b:building and b overlapping campus"
+ },
+ {
+  "category": "Spatial",
+  "title": "Coordinates",
+  "description": "`.lon` and `.lat` of the representative point (for areas a point inside).",
+  "code": "(pick 5 areas a with a:amenity=school).map(a => [a.lon, a.lat])"
+ },
+ {
+  "category": "Spatial",
+  "title": "Around a station",
+  "description": "Shops less than 500 m from a station (change the name for other databases).",
+  "code": "station = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\ncount of nodes s with s:shop and s near some _ in [station] closer than 500 m"
+ },
+ {
+  "category": "Areas",
+  "title": "Total park area",
+  "description": "Sum of the areas of all parks.",
+  "code": "sum of (areas p with p:leisure=park).map(p => p.area)"
+ },
+ {
+  "category": "Areas",
+  "title": "Largest parks",
+  "description": "`ordered by` sorts before `pick` takes the first ones.",
+  "code": "pick 5 areas p with p:leisure=park ordered by -p.area"
+ },
+ {
+  "category": "Areas",
+  "title": "Average building",
+  "description": "Average footprint of buildings in a part of town.",
+  "code": "average of (areas b with b:building within Vegesack).map(b => b.area)"
+ },
+ {
+  "category": "Areas",
+  "title": "Multipolygon relations",
+  "description": "Areas made of several rings.",
+  "code": "areas r with r:type=multipolygon and r:landuse"
+ },
+ {
+  "category": "Areas",
+  "title": "Lakes and ponds",
+  "description": "Water areas larger than one hectare.",
+  "code": "areas w with w:natural=water and w.area > 1 ha"
+ },
+ {
+  "category": "Routing",
+  "title": "Walking route",
+  "description": "Shortest path on the street network from a library to the main station; `.length` and `.duration` describe it (change the name for other databases).",
+  "code": "a = pick node n with n:amenity=library\nb = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\np = path P from a to b by foot\np.length, p.duration\np"
+ },
+ {
+  "category": "Routing",
+  "title": "Cycling route",
+  "description": "The same by bicycle (15 km/h, one-way streets respected).",
+  "code": "a = pick node n with n:amenity=library\nb = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\npath P from a to b by bicycle"
+ },
+ {
+  "category": "Routing",
+  "title": "Ten minutes on foot",
+  "description": "The area reachable within ten minutes of walking from the main station.",
+  "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nisochrone I from s closer than 10 min by foot"
+ },
+ {
+  "category": "Routing",
+  "title": "Two kilometres by bicycle",
+  "description": "Isochrones also work with distances on the network.",
+  "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nisochrone I from s closer than 2 km by bicycle"
+ },
+ {
+  "category": "Routing",
+  "title": "Shops within walking time",
+  "description": "An isochrone is a region and works with `within`.",
+  "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nreach = isochrone I from s closer than 10 min by foot\ncount of nodes x with x:shop within reach"
+ },
+ {
+  "category": "Grouping",
+  "title": "Count per value",
+  "description": "`per` groups by the value of an expression.",
+  "code": "count of nodes s with s:shop per s:shop"
+ },
+ {
+  "category": "Grouping",
+  "title": "Only large groups",
+  "description": "`having` filters the groups after counting.",
+  "code": "count of nodes s with s:shop per s:shop having count > 20"
+ },
+ {
+  "category": "Grouping",
+  "title": "Shares",
+  "description": "The share of each group; all shares add up to 1.",
+  "code": "share of s in (nodes x with x:shop) per s:shop"
+ },
+ {
+  "category": "Grouping",
+  "title": "Share with a condition",
+  "description": "Without `per`, `share` measures how many fulfil the condition.",
+  "code": "share of b in (nodes x with x:amenity=bench) with b:backrest=yes"
+ },
+ {
+  "category": "Grouping",
+  "title": "Per district",
+  "description": "A set of areas groups by the area each element lies in; the map shades the districts.",
+  "code": "count of nodes n with n:amenity=bench per (areas d with d:boundary=administrative and d:admin_level='9')"
+ },
+ {
+  "category": "Grouping",
+  "title": "Per grid cell",
+  "description": "Equal-area cells (EPSG:3035 in Europe).",
+  "code": "count of nodes n with n:amenity=bench per cell of 1 km"
+ },
+ {
+  "category": "Grouping",
+  "title": "Per map tile",
+  "description": "Web Mercator tiles; the map shades them by count.",
+  "code": "count of nodes n with n:amenity=bench per tile at zoom 13"
+ },
+ {
+  "category": "Grouping",
+  "title": "Two levels",
+  "description": "Several `per` group by several keys.",
+  "code": "count of nodes s with s:shop in [bakery, supermarket] per s:shop per year from 2015 to 2024"
+ },
+ {
+  "category": "Grouping",
+  "title": "Filtering groups",
+  "description": "`groups g in …` turns the rows of a grouped result into elements.",
+  "code": "groups g in (count of nodes s with s:shop per s:shop) with g.count > 50"
+ },
+ {
+  "category": "Grouping",
+  "title": "Chunks",
+  "description": "`per chunk of N` cuts an ordered set into pieces of N.",
+  "code": "count of nodes n with n:amenity=bench per chunk of 1000 ordered by n.id"
+ },
+ {
+  "category": "Statistics",
+  "title": "Distribution of values",
+  "description": "How often each value occurs, the most frequent first.",
+  "code": "distribution of (nodes n with n:amenity=bench).map(n => n:backrest)"
+ },
+ {
+  "category": "Statistics",
+  "title": "Distribution of lengths",
+  "description": "Many different numbers are put into classes with round bounds.",
+  "code": "distribution of (ways w with w:highway=residential).map(w => w.length)"
+ },
+ {
+  "category": "Statistics",
+  "title": "Entropy",
+  "description": "Shannon entropy (bits) of the shop types: higher means more diverse.",
+  "code": "entropy of (count of nodes s with s:shop per s:shop)"
+ },
+ {
+  "category": "Statistics",
+  "title": "Concentration of edits",
+  "description": "Gini coefficient of the highway versions per user: 0 even, 1 one user does all.",
+  "code": "gini of (count of ways w with w:highway per w.user)"
+ },
+ {
+  "category": "Statistics",
+  "title": "Spread",
+  "description": "Standard distance of the libraries from their centre.",
+  "code": "spread of nodes n with n:amenity=library"
+ },
+ {
+  "category": "Statistics",
+  "title": "Density",
+  "description": "Benches per km² of the region.",
+  "code": "density of nodes n with n:amenity=bench within Vegesack"
+ },
+ {
+  "category": "Statistics",
+  "title": "Correlation",
+  "description": "Pearson correlation of two time series, paired by year.",
+  "code": "correlate (count of nodes n with n:amenity=bench per year from 2010 to 2024) with (count of nodes n with n:amenity=waste_basket per year from 2010 to 2024)"
+ },
+ {
+  "category": "Statistics",
+  "title": "Regression",
+  "description": "Least squares: slope, intercept and r².",
+  "code": "regress (count of nodes n with n:amenity=bench per year from 2010 to 2024) on (count of nodes n with n:amenity=waste_basket per year from 2010 to 2024)"
+ },
+ {
+  "category": "Statistics",
+  "title": "Forecast",
+  "description": "Continues a time series linearly.",
+  "code": "forecast 3 years of (count of nodes n with n:amenity=bench on each year from 2010 to 2024)"
+ },
+ {
+  "category": "Statistics",
+  "title": "Power law",
+  "description": "Fits a power law to the number of highway versions per user.",
+  "code": "fit powerlaw to (count of ways w with w:highway per w.user).map(g => g.count)"
+ },
+ {
+  "category": "Users, changesets and keys",
+  "title": "Active users",
+  "description": "Users with more than 500 changesets in the data.",
+  "code": "count of users u with count of u.changesets > 500"
+ },
+ {
+  "category": "Users, changesets and keys",
+  "title": "Changesets in a period",
+  "description": "Changesets that started in the first quarter of 2024.",
+  "code": "count of changesets from 2024-01 to 2024-03"
+ },
+ {
+  "category": "Users, changesets and keys",
+  "title": "Editing streaks",
+  "description": "Runs of consecutive days on which a very active user edited.",
+  "code": "u = pick user u with count of u.changesets > 1000\nstreaks of u.changesets"
+ },
+ {
+  "category": "Users, changesets and keys",
+  "title": "Keys in use",
+  "description": "All tag keys in use at the end of the data.",
+  "code": "count of keys"
+ },
+ {
+  "category": "Users, changesets and keys",
+  "title": "New keys",
+  "description": "Keys in use now, with more than 100 elements, that did not exist in 2015.",
+  "code": "old = keys on 2015-01-01\n(keys k with k not in old and k.count > 100).map(k => k.name)"
+ },
+ {
+  "category": "Users, changesets and keys",
+  "title": "Values of a key",
+  "description": "`.count` and `.values` of a key: elements and distinct values.",
+  "code": "shop = pick key k with k.name == 'shop'\nshop.count, shop.values"
+ },
+ {
+  "category": "Advanced",
+  "title": "Own fields",
+  "description": "`define` adds a field to all elements of a kind.",
+  "code": "define node N: edits = N.version - 1\naverage of (nodes n with n:amenity=bench).map(n => n.edits)"
+ },
+ {
+  "category": "Advanced",
+  "title": "Transitions",
+  "description": "How the class of a road changed over its versions.",
+  "code": "w = pick way w with w:highway and w.version > 10\ntransitions of w.versions.map(v => v:highway)"
+ },
+ {
+  "category": "Advanced",
+  "title": "Classification",
+  "description": "Predicts the missing backrest tag from the position (k nearest neighbours); also reports the accuracy.",
+  "code": "classify (nodes n with n:amenity=bench) by n => n:backrest using n => [n.lon, n.lat]"
+ },
+ {
+  "category": "Advanced",
+  "title": "Confusion table",
+  "description": "How often two values occur together, element by element.",
+  "code": "b = nodes n with n:amenity=bench and n:backrest\nconfusion of b.map(n => n:backrest) with b.map(n => n:material ?? 'unknown')"
+ }
+]

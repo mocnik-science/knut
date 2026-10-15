@@ -120,9 +120,6 @@ impl pushdown::TextIdents for Checked {
         matches!(self.idents.get(&e.span), Some(IdentRes::Text(_)))
     }
 
-    fn counts_missing(&self, e: &Expr) -> bool {
-        self.settings.ignore_warnings && self.w001.iter().any(|w| w.span == e.span)
-    }
 }
 
 /// Reads the settings only (to find the database before the full check).
@@ -1598,8 +1595,7 @@ impl<'a> Checker<'a> {
                 )
                 .why(format!("{} without {key} will be left out.", cap(kp)), format!("{} ohne {key} fallen weg.", cap(kp)))
                 .header(Header::YouCan)
-                .sugg_label("keep them:", "behalten:", format!("{cmp_txt} or {tag_txt} == none"))
-                .sugg_label("run anyway:", "trotzdem ausführen:", "ignore_warnings = true"),
+                .sugg_label("keep them:", "behalten:", format!("{cmp_txt} or {tag_txt} == none")),
             );
             self.w001.push(W001Site { span, key, kind });
         }

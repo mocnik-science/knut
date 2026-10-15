@@ -8,11 +8,13 @@ pub mod agg;
 pub mod areas;
 pub mod arith;
 pub mod cache;
+pub mod control;
 pub mod cs;
 pub mod dataset;
 pub mod db;
 pub mod eval;
 pub mod fields;
+pub mod geojson;
 pub mod geom;
 pub mod net;
 pub mod notes;
@@ -49,11 +51,16 @@ pub struct Options {
     /// Rows shown per result in text output.
     pub limit: usize,
     pub timing: bool,
+    /// Progress and cancellation (`knut web`).
+    pub control: Option<Arc<control::Control>>,
+    /// An already opened database, used when the script asks for the same file (keeps
+    /// the block cache between runs).
+    pub shared_db: Option<Arc<db::Db>>,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { db: None, format: Format::Text, out_dir: None, check_only: false, explain: false, limit: 20, timing: true }
+        Options { db: None, format: Format::Text, out_dir: None, check_only: false, explain: false, limit: 20, timing: true, control: None, shared_db: None }
     }
 }
 
@@ -93,8 +100,13 @@ pub fn prepare(src: &str, file: Option<&str>, base_dir: &Path, opts: &Options) -
         _ => None,
     };
     if let Some((p, sp)) = &db_path {
-        match db::Db::open(p) {
-            Ok(d) => db = Some(Arc::new(d)),
+        let shared = opts.shared_db.as_ref().filter(|d| d.path == *p || std::fs::canonicalize(&d.path).ok() == std::fs::canonicalize(p).ok());
+        let opened = match shared {
+            Some(d) => Ok(d.clone()),
+            None => db::Db::open(p).map(Arc::new),
+        };
+        match opened {
+            Ok(d) => db = Some(d),
             Err(e) => {
                 let shown = p.display().to_string();
                 let d = Diagnostic::error(
@@ -128,7 +140,8 @@ pub fn prepare(src: &str, file: Option<&str>, base_dir: &Path, opts: &Options) -
             .sugg("knut_db = 'file.knutdb'");
         diags.insert(0, d);
     }
-    let ctx = Ctx::new(chk, db, db_err, base_dir.to_path_buf());
+    let mut ctx = Ctx::new(chk, db, db_err, base_dir.to_path_buf());
+    ctx.control = opts.control.clone();
     // phase 2 checks that need the database: places, data sets
     if diags.iter().all(|d| !d.is_error()) {
         let mut extra = Vec::new();
@@ -207,7 +220,30 @@ pub fn run_file(path: &Path, opts: &Options, out: &mut dyn Write, err: &mut dyn 
 }
 
 pub fn run_source(src: &str, file: Option<&str>, base_dir: &Path, opts: &Options, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    run_source_with(src, file, base_dir, opts, out, err, None, None)
+}
+
+/// Receives every output instead of the formatted text (`run_collect`).
+pub type Sink<'a> = &'a mut dyn FnMut(&Ctx, &OutputValue) -> R<()>;
+
+#[allow(clippy::too_many_arguments)]
+fn run_source_with(
+    src: &str,
+    file: Option<&str>,
+    base_dir: &Path,
+    opts: &Options,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    sink: Option<Sink>,
+    mut collect: Option<&mut Vec<Diagnostic>>,
+) -> i32 {
     let (prep, diags, lang) = prepare(src, file, base_dir, opts);
+    // W001 is a hint while writing (a comparison with a missing value is false, which is
+    // usually what is meant); it does not stop or clutter a run
+    let diags: Vec<Diagnostic> = diags.into_iter().filter(|d| d.code != "W001").collect();
+    if let Some(c) = collect.as_mut() {
+        c.extend(diags.iter().cloned());
+    }
     let errors = diags.iter().filter(|d| d.is_error()).count();
     let warnings = diags.len() - errors;
     let ignore = prep.as_ref().is_some_and(|p| p.chk.settings.ignore_warnings);
@@ -237,15 +273,23 @@ pub fn run_source(src: &str, file: Option<&str>, base_dir: &Path, opts: &Options
         let _ = write!(out, "{}", explain(&prep));
         return EXIT_OK;
     }
-    execute(&prep, opts, out, err)
+    execute(&prep, opts, out, err, sink, collect)
 }
 
 /// Evaluates all outputs (used by the Python binding).
 pub fn evaluate(prep: &Prepared, f: &mut dyn FnMut(OutputValue) -> R<()>) -> R<()> {
     let chk = prep.chk;
+    let steps: usize = chk.outputs.iter().map(|&i| if let StmtKind::Output(es) = &chk.script.stmts[i].kind { es.len() } else { 0 }).sum();
+    let mut step = 0;
     for &i in &chk.outputs {
         let StmtKind::Output(es) = &chk.script.stmts[i].kind else { continue };
         for e in es {
+            if let Some(c) = &prep.ctx.control {
+                let text: String = prep.ctx.text(e.span).chars().take(80).collect();
+                c.begin_step(step, steps, &format!("line {}: {text}", chk.line_of(e.span)));
+            }
+            step += 1;
+            prep.ctx.check_cancel()?;
             let t0 = Instant::now();
             let v = prep.ctx.eval(e, &None)?;
             // force lazy sets so that timing and errors belong to this output
@@ -258,7 +302,7 @@ pub fn evaluate(prep: &Prepared, f: &mut dyn FnMut(OutputValue) -> R<()>) -> R<(
     Ok(())
 }
 
-fn execute(prep: &Prepared, opts: &Options, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+fn execute(prep: &Prepared, opts: &Options, out: &mut dyn Write, err: &mut dyn Write, mut sink: Option<Sink>, mut collect: Option<&mut Vec<Diagnostic>>) -> i32 {
     let ctx = &prep.ctx;
     let chk = prep.chk;
     let lang = chk.settings.lang;
@@ -287,6 +331,9 @@ fn execute(prep: &Prepared, opts: &Options, out: &mut dyn Write, err: &mut dyn W
         }
         if output::is_empty(ctx, &o.value) {
             empties.push((span, o.expr.clone()));
+        }
+        if let Some(s) = sink.as_mut() {
+            return s(ctx, &o);
         }
         match opts.format {
             Format::Text => {
@@ -339,6 +386,9 @@ fn execute(prep: &Prepared, opts: &Options, out: &mut dyn Write, err: &mut dyn W
         let _ = writeln!(err, "{n}");
     }
     if let Err(e) = res {
+        if let Some(c) = collect.as_mut() {
+            c.push((*e.diag).clone());
+        }
         let line = chk.line_of(e.diag.span);
         let _ = writeln!(err, "{}", diag::render(&e.diag, src, prep.file.as_deref(), lang));
         let written = n_out;
@@ -379,6 +429,9 @@ fn execute(prep: &Prepared, opts: &Options, out: &mut dyn Write, err: &mut dyn W
     }
     if !dw.is_empty() {
         render_all(&dw, src, prep.file.as_deref(), lang, err);
+        if let Some(c) = collect.as_mut() {
+            c.extend(dw.iter().cloned());
+        }
     }
     EXIT_OK
 }
@@ -448,4 +501,118 @@ pub fn explain(prep: &Prepared) -> String {
         s.push_str("No database scans.\n");
     }
     s
+}
+
+/// One output of `run_collect`.
+#[derive(Debug, serde::Serialize)]
+pub struct CollectedOutput {
+    pub line: usize,
+    pub expr: String,
+    pub seconds: f64,
+    /// Text rendering (as `--format text`).
+    pub text: String,
+    /// Value as `--format json`.
+    pub value: serde_json::Value,
+    /// GeoJSON feature collection, if the result has something to draw.
+    pub geojson: Option<serde_json::Value>,
+    pub features: usize,
+    /// More features exist than were included.
+    pub truncated: bool,
+}
+
+/// Result of `run_collect`.
+#[derive(Debug, serde::Serialize)]
+pub struct Collected {
+    pub code: i32,
+    /// All messages as `knut script.knut` prints them.
+    pub messages: String,
+    pub outputs: Vec<CollectedOutput>,
+    pub cancelled: bool,
+    /// The messages with positions (for editors).
+    pub problems: Vec<Problem>,
+}
+
+/// Runs a script and collects its outputs as text, JSON and GeoJSON (for `knut web`).
+/// `max_features` limits the features per output.
+pub fn run_collect(src: &str, file: Option<&str>, base_dir: &Path, opts: &Options, max_features: usize) -> Collected {
+    let mut outputs = Vec::new();
+    let mut err = Vec::new();
+    let limit = opts.limit;
+    let mut sink = |ctx: &Ctx, o: &OutputValue| -> R<()> {
+        let text = output::text(ctx, &o.value, limit)?;
+        let value = output::json(ctx, &o.value)?;
+        let f = geojson::features(ctx, &o.value, max_features)?;
+        outputs.push(CollectedOutput {
+            line: o.line,
+            expr: o.expr.clone(),
+            seconds: o.seconds,
+            text,
+            value,
+            features: f.as_ref().map_or(0, |f| f.count),
+            truncated: f.as_ref().is_some_and(|f| f.truncated),
+            geojson: f.map(|f| f.collection),
+        });
+        Ok(())
+    };
+    let mut diags = Vec::new();
+    let code = run_source_with(src, file, base_dir, opts, &mut std::io::sink(), &mut err, Some(&mut sink), Some(&mut diags));
+    let cancelled = opts.control.as_ref().is_some_and(|c| c.is_cancelled());
+    let lang = knut_plan::settings_of(&knut_lang::parse(src).0).lang;
+    let problems = diags.iter().filter(|d| d.code != "E902").map(|d| Problem::of(d, src, lang)).collect();
+    Collected { code, messages: String::from_utf8_lossy(&err).into_owned(), outputs, cancelled, problems }
+}
+
+/// A message with its position, for editors: offsets count UTF-16 code units.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Problem {
+    pub code: &'static str,
+    pub severity: &'static str,
+    pub from: usize,
+    pub to: usize,
+    pub line: usize,
+    pub title: String,
+    /// The whole message as printed.
+    pub text: String,
+}
+
+impl Problem {
+    pub fn of(d: &Diagnostic, src: &str, lang: Lang) -> Problem {
+        let utf16 = |b: u32| -> usize {
+            let b = (b as usize).min(src.len());
+            let b = (0..=b).rev().find(|&i| src.is_char_boundary(i)).unwrap_or(0);
+            src[..b].encode_utf16().count()
+        };
+        Problem {
+            code: d.code,
+            // W001 is a hint, it never stops a run
+            severity: if d.is_error() {
+                "error"
+            } else if d.code == "W001" {
+                "info"
+            } else {
+                "warning"
+            },
+            from: utf16(d.span.start),
+            to: utf16(d.span.end.max(d.span.start)),
+            line: diag::line_col(src, d.span.start).0 + 1,
+            title: d.title.get(lang).to_string(),
+            text: diag::render(d, src, None, lang),
+        }
+    }
+}
+
+/// Fast check while typing: parse and check only (no place names, no data sets).
+pub fn quick_check(src: &str, opts: &Options) -> Vec<Problem> {
+    let (script, diags) = knut_lang::parse(src);
+    let lang = knut_plan::settings_of(&script).lang;
+    let caps = opts.shared_db.as_ref().map(|d| DbCaps {
+        users: d.users,
+        notes: notes::exists(&d.path),
+        extent_km2: d.extent.area_km2(),
+        path: d.path.display().to_string(),
+    });
+    let chk = knut_plan::check(script, src, diags, caps.as_ref());
+    let mut ds = chk.diags.clone();
+    diag::sort(&mut ds);
+    ds.iter().map(|d| Problem::of(d, src, lang)).collect()
 }

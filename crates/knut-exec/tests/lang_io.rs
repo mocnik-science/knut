@@ -76,10 +76,10 @@ fn data_warnings_after_the_run() {
     let r = run_text("nodes n with n:amenity=nothing");
     assert_eq!(r.code, 0);
     assert!(r.err.contains("[W002]"), "{}", r.err);
-    // W001 counts what was left out
-    let r = run_text("ignore_warnings = true\ncount of ways w with w:highway and w:maxspeed > 40 km/h");
+    // values that are not numbers count as missing, without a message
+    let r = run_text("count of ways w with w:highway and w:maxspeed > 40 km/h");
     assert_eq!(r.code, 0);
-    assert!(r.err.contains("1 way has no maxspeed and was left out"), "{}", r.err);
+    assert!(r.err.trim().is_empty(), "{}", r.err);
 }
 
 #[test]

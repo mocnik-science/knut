@@ -265,15 +265,17 @@ fn e608_spatial_left_side_is_a_condition() {
 // ----- static warnings --------------------------------------------------------------------
 
 #[test]
-fn w001_stops_unless_ignored() {
-    let r = fails("ways w with w:maxspeed > 40 km/h", "W001");
-    assert!(r.err.contains("w:maxspeed > 40 km/h or w:maxspeed == none"), "{}", r.err);
-    // presence tests and fallbacks are fine
-    clean("count of ways w with w:maxspeed != none");
-    clean("count of ways w with (w:maxspeed ?? 0 km/h) > 40 km/h");
-    let r = run_text("ignore_warnings = true\ncount of ways w with w:maxspeed > 40 km/h");
+fn w001_is_a_hint_and_does_not_stop() {
+    // a comparison with a missing value is false: the run goes on without a message
+    let r = run_text("count of ways w with w:highway and w:maxspeed > 40 km/h");
     assert_eq!(r.code, 0, "{}", r.err);
-    assert!(r.err.contains("[W001]"));
+    assert!(!r.err.contains("[W001]"), "{}", r.err);
+    // while typing, the check still points it out, as a hint
+    let opts = knut_exec::Options { shared_db: None, ..Default::default() };
+    let p = knut_exec::quick_check("count of ways w with w:maxspeed > 40 km/h", &opts);
+    let w = p.iter().find(|p| p.code == "W001").expect("W001 hint");
+    assert_eq!(w.severity, "info");
+    assert!(w.text.contains("w:maxspeed > 40 km/h or w:maxspeed == none"), "{}", w.text);
 }
 
 #[test]

@@ -29,12 +29,16 @@ impl GeoIndex {
             let b = g.bbox();
             (v, g, b)
         }).collect();
-        let mut all = BBoxF::EMPTY;
-        for i in &items {
-            all.union(&i.2);
-        }
+        // cell size from where most items lie: a few far-away items (history extracts keep
+        // objects that once lay elsewhere) must not make the cells huge
         let n = items.len().max(1) as f64;
-        let w = if all.is_empty() { 1.0 } else { (all.maxx - all.minx).max(all.maxy - all.miny).max(1e-4) };
+        let w = {
+            let (mut xs, mut ys): (Vec<f64>, Vec<f64>) = items.iter().map(|i| i.2.center()).unzip();
+            xs.sort_by(f64::total_cmp);
+            ys.sort_by(f64::total_cmp);
+            let q = |v: &[f64], p: f64| if v.is_empty() { 0.0 } else { v[((v.len() - 1) as f64 * p).round() as usize] };
+            (q(&xs, 0.95) - q(&xs, 0.05)).max(q(&ys, 0.95) - q(&ys, 0.05)).max(1e-4)
+        };
         let cell = (w / n.sqrt()).clamp(0.0005, 1.0);
         let mut grid: HashMap<(i32, i32), Vec<u32>> = HashMap::default();
         for (i, (_, _, b)) in items.iter().enumerate() {
@@ -128,22 +132,18 @@ impl GeoIndex {
 }
 
 pub fn geo_index(ctx: &Ctx, set: &Arc<SetV>, span: Span) -> R<Arc<GeoIndex>> {
-    {
-        let c = lock(&ctx.caches.geo);
-        if let Some((_, ix)) = c.iter().find(|(s, _)| Arc::ptr_eq(s, set)) {
-            return Ok(ix.clone());
+    let slot = lock(&ctx.caches.geo).entry(Arc::as_ptr(set) as usize).or_insert_with(|| (set.clone(), Default::default())).1.clone();
+    crate::cache::get_or_build(&slot, || {
+        let items = set.items(ctx, Hints { geom: true, hist: false })?;
+        ctx.preload_geoms(&items);
+        let mut v = Vec::with_capacity(items.len());
+        for it in items.iter() {
+            if let Some(g) = ctx.geom_of(it, span)? {
+                v.push((it.clone(), g));
+            }
         }
-    }
-    let items = set.items(ctx, Hints { geom: true, hist: false })?;
-    let mut v = Vec::with_capacity(items.len());
-    for it in items.iter() {
-        if let Some(g) = ctx.geom_of(it, span)? {
-            v.push((it.clone(), g));
-        }
-    }
-    let ix = Arc::new(GeoIndex::build(v));
-    lock(&ctx.caches.geo).push((set.clone(), ix.clone()));
-    Ok(ix)
+        Ok(Arc::new(GeoIndex::build(v)))
+    })
 }
 
 fn speed(m: Mode) -> f64 {
@@ -231,15 +231,18 @@ pub fn network(ctx: &Ctx, mode: Mode, using: Option<&'static Expr>, bbox: BBoxF,
 /// Standard network: all highway ways within `bbox` (latest state).
 pub fn standard_net(ctx: &Ctx, bbox: BBoxF, span: Span) -> R<Arc<Net>> {
     let key = format!("{:.3},{:.3},{:.3},{:.3}", bbox.minx, bbox.miny, bbox.maxx, bbox.maxy);
-    if let Some(n) = lock(&ctx.caches.nets).get(&key) {
-        return Ok(n.clone());
-    }
-    // reuse a cached network that covers the box
-    for n in lock(&ctx.caches.nets).values() {
-        if n.bbox.contains_box(&bbox) {
+    // reuse a finished network that covers the box
+    for s in lock(&ctx.caches.nets).values() {
+        if let Some(Ok(n)) = s.get()
+            && n.bbox.contains_box(&bbox)
+        {
             return Ok(n.clone());
         }
     }
+    crate::cache::get_or_build(&crate::cache::slot(&ctx.caches.nets, key), || build_standard_net(ctx, bbox, span))
+}
+
+fn build_standard_net(ctx: &Ctx, bbox: BBoxF, span: Span) -> R<Arc<Net>> {
     let spec = ScanSpec {
         kinds: KindMask { way: true, ..Default::default() },
         time: TimeMode::State(ctx.latest()),
@@ -250,9 +253,7 @@ pub fn standard_net(ctx: &Ctx, bbox: BBoxF, span: Span) -> R<Arc<Net>> {
     };
     let q = Query { spec, vars: vec!["_".into()], preds: vec![], scope: None, seq: None };
     let set = SetV::lazy(SetSrc::Query(Arc::new(q)));
-    let n = Arc::new(net_from(ctx, &set, span)?);
-    lock(&ctx.caches.nets).insert(key, n.clone());
-    Ok(n)
+    Ok(Arc::new(net_from(ctx, &set, span)?))
 }
 
 /// Builds a network from a set of ways.
@@ -310,9 +311,12 @@ pub struct NetNearest {
 
 pub fn net_nearest(ctx: &Ctx, set: &Arc<SetV>, mode: Mode, metric: Metric, using: Option<&'static Expr>, radius_m: f64, sc: &Sc, span: Span) -> R<Arc<NetNearest>> {
     let key = (Arc::as_ptr(set) as usize, mode as u8, matches!(metric, Metric::Time) as u8);
-    if let Some(x) = lock(&ctx.caches.net_nearest).get(&key) {
-        return Ok(x.1.clone());
-    }
+    let slot = lock(&ctx.caches.net_nearest).entry(key).or_insert_with(|| (set.clone(), Default::default())).1.clone();
+    crate::cache::get_or_build(&slot, || build_net_nearest(ctx, set, mode, metric, using, radius_m, sc, span))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_net_nearest(ctx: &Ctx, set: &Arc<SetV>, mode: Mode, metric: Metric, using: Option<&'static Expr>, radius_m: f64, sc: &Sc, span: Span) -> R<Arc<NetNearest>> {
     let items = set.items(ctx, Hints { geom: true, hist: false })?;
     let mut bb = BBoxF::EMPTY;
     for it in items.iter() {
@@ -341,9 +345,7 @@ pub fn net_nearest(ctx: &Ctx, set: &Arc<SetV>, mode: Mode, metric: Metric, using
         }
     }
     let (dist, label, _) = net.search(&sources, mode, metric, f64::INFINITY);
-    let r = Arc::new(NetNearest { net, dist, label, items: items.clone(), snap });
-    lock(&ctx.caches.net_nearest).insert(key, (set.clone(), r.clone()));
-    Ok(r)
+    Ok(Arc::new(NetNearest { net, dist, label, items: items.clone(), snap }))
 }
 
 pub fn near(ctx: &Ctx, l: &'static Expr, quant: Quant, set_e: &'static Expr, th: Option<&'static Threshold>, sc: &Sc, span: Span) -> R<Value> {

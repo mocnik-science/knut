@@ -26,6 +26,8 @@ struct Cli {
 enum Cmd {
     /// Run a .knut script (also: `knut script.knut`)
     Run(RunArgs),
+    /// Web interface on a map for writing and running queries
+    Web(WebArgs),
     /// Build side indexes next to a database (changesets, notes)
     Index {
         #[command(subcommand)]
@@ -83,6 +85,25 @@ enum Cmd {
         #[arg(long, default_value_t = 5)]
         repeat: usize,
     },
+}
+
+#[derive(Args)]
+struct WebArgs {
+    /// Database used when a query names none (`knut_db`)
+    #[arg(long)]
+    db: Option<PathBuf>,
+    /// Port (the next free one is taken if it is in use)
+    #[arg(long, default_value_t = 8765)]
+    port: u16,
+    /// Address to listen on; the default only accepts connections from this computer
+    #[arg(long, default_value = "127.0.0.1")]
+    host: std::net::IpAddr,
+    /// Do not open the page in the browser
+    #[arg(long)]
+    no_open: bool,
+    /// URL of a MapLibre style for the base map (default: OpenStreetMap tiles)
+    #[arg(long)]
+    style: Option<String>,
 }
 
 #[derive(Args)]
@@ -378,6 +399,7 @@ fn run_script(a: RunArgs) -> i32 {
         explain: a.explain,
         limit: a.limit,
         timing: !a.no_timing,
+        ..Default::default()
     };
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -408,6 +430,7 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.cmd {
         Cmd::Run(_) => unreachable!(),
         Cmd::Index { what } => index(what),
+        Cmd::Web(a) => knut_web::serve(knut_web::WebOptions { db: a.db, host: a.host, port: a.port, open: !a.no_open, style: a.style }),
         Cmd::Build(a) => build(a),
         Cmd::Info { file, users } => info(&file, users),
         Cmd::Query { file, q } => {

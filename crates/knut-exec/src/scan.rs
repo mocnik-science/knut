@@ -9,6 +9,7 @@ use crate::geom::{self, BBoxF, Geom, P, Polygon};
 use crate::region::{Cover, Region};
 use crate::value::*;
 use knut::DecodedBlock;
+use crate::control::Control;
 use knut_format::bloom::{self, Bloom};
 use knut_format::layout::{RNode, TREE_LARGE};
 use knut_format::*;
@@ -619,14 +620,29 @@ pub fn finish_deferred(spec: &ScanSpec, deferred: Vec<Deferred>, sink: &mut dyn 
 
 /// Parallel fold over all matching items. Returns one accumulator per block (in block
 /// order) plus one for de-duplicated multi-segment objects.
-pub fn fold<A: Send>(db: &Db, spec: &ScanSpec, init: &(dyn Fn() -> A + Sync), step: &(dyn Fn(&mut A, Item) -> R<()> + Sync)) -> R<Vec<A>> {
+pub fn fold<A: Send>(
+    db: &Db,
+    ctl: Option<&Control>,
+    spec: &ScanSpec,
+    init: &(dyn Fn() -> A + Sync),
+    step: &(dyn Fn(&mut A, Item) -> R<()> + Sync),
+) -> R<Vec<A>> {
     let bl = blocks(db, spec)?;
+    if let Some(c) = ctl {
+        c.add_blocks(bl.len() as u64);
+    }
     let parts: Vec<(A, Vec<Deferred>, Option<RtErr>)> = bl
         .par_iter()
         .map(|&no| {
             let mut acc = init();
             let mut def = Vec::new();
+            if ctl.is_some_and(|c| c.is_cancelled()) {
+                return (acc, def, Some(crate::eval::cancelled()));
+            }
             let r = scan_block(db, spec, no, &mut |it| step(&mut acc, it), &mut def);
+            if let Some(c) = ctl {
+                c.block_done();
+            }
             (acc, def, r.err())
         })
         .collect();

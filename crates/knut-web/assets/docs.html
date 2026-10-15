@@ -1,0 +1,159 @@
+<h2>The knut language in brief</h2>
+<p>A query is a list of lines. A line is an <b>output</b> (its result is shown), an <b>assignment</b> <code>name = …</code>, a <b>setting</b> or a <code>define</code>. Commas put several outputs on one line; <code>#</code> starts a comment. A line continues when the next one is indented or a bracket is open.</p>
+<pre>benches = nodes n with n:amenity=bench   # assignment
+count of benches, benches                # two outputs</pre>
+<p>Names are given once and must be defined before they are used. Spaces matter in three places: <code>n:amenity</code> (tag, no spaces), <code>n:amenity=bench</code> (short form of <code>==</code>, no spaces) and <code>a = b</code> (assignment, with spaces).</p>
+
+<h2>Selections</h2>
+<pre>KIND VAR [with CONDITION] [within REGION] [on DATE | on each UNIT] [ordered by EXPR] [from DATE to DATE]</pre>
+<table>
+<tr><th>Kind</th><th>Selects</th></tr>
+<tr><td><code>node(s)</code>, <code>way(s)</code>, <code>relation(s)</code></td><td>OSM objects</td></tr>
+<tr><td><code>area(s)</code></td><td>closed ways and multipolygon/boundary relations that are areas</td></tr>
+<tr><td><code>*</code></td><td>all of them, each object once (areas as areas)</td></tr>
+<tr><td><code>changeset(s)</code>, <code>user(s)</code>, <code>note(s)</code>, <code>key(s)</code></td><td>metadata (notes need <code>knut index notes</code>)</td></tr>
+</table>
+<p>An element is one <b>version</b> of an object. Without a time clause a selection gives the state at the end of the data.</p>
+<table>
+<tr><td><code>pick KIND x …</code></td><td>one element (or <code>none</code>)</td></tr>
+<tr><td><code>pick N KINDS x …</code></td><td>a list of up to N; <code>pick exactly N</code> fails with fewer</td></tr>
+<tr><td><code>… randomly [using seed S]</code></td><td>a repeatable random choice</td></tr>
+<tr><td><code>… ordered by EXPR</code></td><td>order for <code>pick</code> and <code>per chunk</code> (<code>-x</code> for descending)</td></tr>
+</table>
+
+<h2>Conditions</h2>
+<table>
+<tr><td><code>x:key</code></td><td>tag present (true whatever the value)</td></tr>
+<tr><td><code>x:key=value</code>, <code>x:key == 'value'</code></td><td>tag has a value</td></tr>
+<tr><td><code>x:key == none</code></td><td>tag missing</td></tr>
+<tr><td><code>== != &lt; &lt;= &gt; &gt;=</code></td><td>comparisons; a comparison with a missing value, or with a value that is not a number where numbers are compared (<code>maxspeed=none</code>), is false</td></tr>
+<tr><td><code>x in [a, b]</code>, <code>x not in S</code></td><td>membership in a list or set</td></tr>
+<tr><td><code>x between a and b</code></td><td>range, both ends included</td></tr>
+<tr><td><code>and</code>, <code>or</code>, <code>not</code>, <code>( … )</code></td><td>combine conditions</td></tr>
+<tr><td><code>a ?? b</code></td><td><code>b</code> if <code>a</code> is missing or cannot be read</td></tr>
+<tr><td><code>x:['any key']</code></td><td>keys with dots or computed keys</td></tr>
+</table>
+
+<h2>Fields</h2>
+<p><code>:</code> reads a tag, <code>.</code> a field computed by knut.</p>
+<table>
+<tr><td><code>.id .version .time .type .osmType .deleted</code></td><td>identity of the version</td></tr>
+<tr><td><code>.user .changeset .creator</code></td><td>who and in which changeset (<code>.creator</code>: user of version 1)</td></tr>
+<tr><td><code>.previous .next .versions</code></td><td>other versions of the object</td></tr>
+<tr><td><code>.unchangedBefore .unchangedAfter</code></td><td>time to the previous / next version</td></tr>
+<tr><td><code>.length .area .lon .lat .geometry</code></td><td>geometry (m, m², degrees)</td></tr>
+<tr><td><code>.keys .nodes .members</code></td><td>tag keys, nodes of a way, members of a relation</td></tr>
+<tr><td>text: <code>.length .number .lower .upper</code></td><td>characters, conversion</td></tr>
+<tr><td>users: <code>.changesets .firstEdit .lastEdit .activeSpan .activeDays .edits</code></td><td></td></tr>
+<tr><td>changesets: <code>.time .closedAt .duration .count .comment .bbox</code></td><td></td></tr>
+<tr><td>keys: <code>.name .count .values .length</code></td><td></td></tr>
+<tr><td>sets and lists: <code>.count .map(x =&gt; …) .filter(x =&gt; …)</code></td><td></td></tr>
+<tr><td>groups: <code>.key .count .items</code>; paths: <code>.length .duration .edges</code></td><td></td></tr>
+</table>
+
+<h2>Time</h2>
+<table>
+<tr><td><code>on DATE</code></td><td>state at that moment</td></tr>
+<tr><td><code>on each month from A to B</code></td><td>state at the start of every day/week/month/year (time series)</td></tr>
+<tr><td><code>from A to B</code></td><td>all versions (edits, also deletions) in the period</td></tr>
+<tr><td><code>per day|week|month|year</code></td><td>group versions by their time</td></tr>
+<tr><td><code>30 days before 2020-01-01</code></td><td>shifted dates (<code>after</code> too)</td></tr>
+</table>
+<p>Dates: <code>2020</code>, <code>2020-03</code>, <code>2020-03-07</code>, <code>7 Mar 2020</code>, <code>Mar 2020</code>, <code>2020-03-07T14:30Z</code>. A month or year stands for its start, at the end of <code>from … to</code> for its end. All times are UTC.</p>
+
+<h2>Units</h2>
+<table>
+<tr><td>length</td><td><code>m km mi mile(s) mil</code></td></tr>
+<tr><td>area</td><td><code>m2 km2 mi2 ha</code></td></tr>
+<tr><td>speed</td><td><code>km/h mph knots</code></td></tr>
+<tr><td>time</td><td><code>s min h days weeks months years</code></td></tr>
+<tr><td>other</td><td><code>%</code> (incline), <code>t kg g</code></td></tr>
+</table>
+<p>A tag value with a unit keeps it (<code>"30 mph"</code>). Otherwise the unit after the key applies (<code>b:height m</code>), else the documented default: <code>maxspeed</code> km/h, <code>height</code>/<code>width</code>/<code>length</code>/<code>ele</code> m, <code>maxweight</code> t, <code>distance</code> km.</p>
+
+<h2>History</h2>
+<pre>way A -> way B -> way C [closer than 30 days] with …</pre>
+<p>Every run of consecutive versions of the same object. <code>closer than</code> limits the time from the first to the last. <code>war_B</code> is the set of the B elements of the matches <code>war</code>; on one match <code>x_B</code> is its B element.</p>
+
+<h2>Space</h2>
+<table>
+<tr><td><code>within 8.7...8.9, 53.0...53.1</code></td><td>box: longitude range, latitude range</td></tr>
+<tr><td><code>within Vienna</code>, <code>within AT</code></td><td>place by name or ISO code of a boundary in the database</td></tr>
+<tr><td><code>within S</code></td><td>an area, a set of areas, an isochrone</td></tr>
+<tr><td><code>x near some _ in S [closer than 300 m]</code></td><td>some element of S is near (default 100 m); also <code>no</code>, <code>all</code></td></tr>
+<tr><td><code>… closer than 10 min by foot</code></td><td>on the street network (<code>foot</code>, <code>bicycle</code>, <code>car</code>)</td></tr>
+<tr><td><code>x overlapping y</code></td><td>geometries overlap</td></tr>
+<tr><td><code>nearest of S to x [by foot]</code></td><td>the closest element of S</td></tr>
+<tr><td><code>path P from a to b by foot</code></td><td>shortest path</td></tr>
+<tr><td><code>isochrone I from a closer than 10 min by foot</code></td><td>reachable area (a region)</td></tr>
+<tr><td><code>graph of ways w with …</code></td><td>own network, used with <code>using NET</code></td></tr>
+</table>
+
+<h2>Aggregates</h2>
+<pre>FUNCTION of SET [with C] [within R] [on …] per GROUPING… [having C] [ordered by E]</pre>
+<p><code>count sum average variance distribution distinct share entropy gini density spread streaks transitions earliest latest days weeks months years</code></p>
+<table>
+<tr><td><code>per x:key</code>, <code>per x.user</code></td><td>by the value of an expression</td></tr>
+<tr><td><code>per (areas d with …)</code></td><td>by the area each element lies in</td></tr>
+<tr><td><code>per cell of 1 km</code>, <code>per tile at zoom 14</code></td><td>equal-area grid, map tiles</td></tr>
+<tr><td><code>per chunk of 100</code></td><td>pieces of an ordered set</td></tr>
+<tr><td><code>having count &gt; 5</code></td><td>filter the groups</td></tr>
+<tr><td><code>share of x in S per K</code> / <code>with C</code></td><td>share per group / share fulfilling C</td></tr>
+</table>
+<p><code>count of x in S with C</code> names the element of S; <code>count of nodes n with …</code> works directly.</p>
+
+<h2>Quantifiers and groups</h2>
+<table>
+<tr><td><code>the x in S with C</code></td><td>exactly one element (else E401/E402)</td></tr>
+<tr><td><code>all x in S with C</code></td><td>the set of matches</td></tr>
+<tr><td><code>some x in S with C</code></td><td>true if there is one</td></tr>
+<tr><td><code>groups g in RESULT with C</code></td><td>rows of a grouped result as elements</td></tr>
+</table>
+
+<h2>Statistics and special forms</h2>
+<table>
+<tr><td><code>correlate A with B</code></td><td>Pearson correlation (paired by key or position)</td></tr>
+<tr><td><code>regress A on B</code></td><td>least squares: slope, intercept, r², n</td></tr>
+<tr><td><code>fit powerlaw to X</code></td><td>exponent α and x<sub>min</sub></td></tr>
+<tr><td><code>forecast 3 years of SERIES</code></td><td>linear continuation</td></tr>
+<tr><td><code>confusion of A with B</code></td><td>pairs of values counted</td></tr>
+<tr><td><code>classify S by x =&gt; LABEL using x =&gt; [F, …]</code></td><td>k nearest neighbours; predictions and accuracy</td></tr>
+<tr><td><code>split S by KEY at C</code></td><td>sequences cut where C holds</td></tr>
+<tr><td><code>dataset 'file.csv'</code></td><td>CSV, GeoJSON or Parquet as elements (columns as tags)</td></tr>
+</table>
+
+<h2>Own fields</h2>
+<pre>define node N: edits = N.version - 1
+define user U: years = U.activeDays / 365</pre>
+
+<h2>Settings</h2>
+<table>
+<tr><td><code>knut_db = 'file.knutdb'</code></td><td>database (relative to the script); the field above the editor overrides it</td></tr>
+<tr><td><code>seed = 42</code></td><td>seed for <code>randomly</code></td></tr>
+<tr><td><code>messages = de</code></td><td>messages in German (<code>en</code> is the default)</td></tr>
+<tr><td><code>ignore_warnings = true</code></td><td>warnings found before the run (W003, W005, W006) do not stop it</td></tr>
+<tr><td><code>near_distance = 50 m</code></td><td>distance for <code>near</code> without <code>closer than</code></td></tr>
+</table>
+
+<h2>Messages</h2>
+<table>
+<tr><td>E1xx</td><td>spelling: spaces, brackets, clause order</td></tr>
+<tr><td>E2xx</td><td>names, settings, database, places</td></tr>
+<tr><td>E3xx</td><td>dates and units</td></tr>
+<tr><td>E4xx</td><td><code>the</code>, <code>pick exactly</code></td></tr>
+<tr><td>E5xx</td><td>spatial relations and networks</td></tr>
+<tr><td>E6xx</td><td>types and values</td></tr>
+<tr><td>W001</td><td>hint while typing: elements without the tag are left out by a comparison (never stops)</td></tr>
+<tr><td>W002</td><td>after the run: the result is empty</td></tr>
+<tr><td>W003, W005, W006</td><td>before the run: a very large region without a filter, a word used as unit and name, a name used as a value</td></tr>
+</table>
+<p>Errors found before running stop the run, and so do the warnings W003, W005 and W006 unless <code>ignore_warnings = true</code>. All of them are underlined in the editor while you type. Errors while running stop it; the results computed so far are kept.</p>
+
+<h2>Keys in knut web</h2>
+<table>
+<tr><td>⌘/Ctrl + Enter</td><td>run</td></tr>
+<tr><td>Esc</td><td>cancel a run</td></tr>
+<tr><td>Ctrl + Space</td><td>completion</td></tr>
+<tr><td>⌘/Ctrl + F</td><td>find in the query</td></tr>
+<tr><td>⌘/Ctrl + /</td><td>comment lines</td></tr>
+</table>
