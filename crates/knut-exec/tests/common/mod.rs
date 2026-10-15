@@ -162,6 +162,37 @@ fn build(name: &str, opt: BuildOptions) -> PathBuf {
     path
 }
 
+/// A road that was rebuilt 50 km away as a secondary road. Way 1 gets two segments, the
+/// primary one at the old place and the secondary one at the new place; each has 150 nodes,
+/// so that they do not fit into one block. The block at the new place holds no
+/// `highway=primary`.
+pub fn moved_road() -> Vec<Element> {
+    let road = [("highway", "primary"), ("name", "Old Road")];
+    let mut e = Vec::new();
+    for i in 0..150 {
+        e.push(node(10_000 + i, 1, T0, 7, Some(pos(i as f64 * 1e-4, 0.0)), &[]));
+        e.push(node(20_000 + i, 1, T0, 7, Some(pos(0.7 + i as f64 * 1e-4, 0.0)), &[]));
+    }
+    let old: Vec<i64> = (10_000..10_150).collect();
+    let new: Vec<i64> = (20_000..20_150).collect();
+    e.push(way(1, 1, T0, 7, &old, &road));
+    e.push(way(1, 2, T0 + 100 * DAY, 7, &new, &[("highway", "secondary"), ("name", "Old Road")]));
+    // the same tags elsewhere, so that they are in the dictionaries
+    e.push(way(2, 1, T0, 7, &old[..2], &road));
+    e.push(way(3, 1, T0, 7, &old[..2], &[("highway", "secondary")]));
+    e
+}
+
+pub fn db_moved_road() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("knut-lang-test-{}-moved", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("moved.knutdb");
+    let opt = BuildOptions { block_size: 2048, zstd_dict: false, min_value_count: 1, ..Default::default() };
+    knut_builder::build(&VecSource::new(moved_road()), &path, &opt, &|_| {}).unwrap();
+    path
+}
+
 /// The town database (built once per test binary).
 pub fn db() -> &'static Path {
     static P: OnceLock<PathBuf> = OnceLock::new();

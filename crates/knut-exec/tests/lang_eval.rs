@@ -444,3 +444,23 @@ fn lists_keep_duplicates_and_maps() {
     assert_eq!(num(&v[1]), 4.0);
     assert_eq!(v[2], json!([2, 4, 6]));
 }
+
+/// An object split over blocks: its newer version lies in a block the tag filters skip, and
+/// still decides that the old, matching version is no longer current.
+#[test]
+fn objects_over_several_blocks_count_with_their_newest_version() {
+    let db = db_moved_road();
+    let r = knut::Reader::open(&db).unwrap();
+    assert!(r.lookup(knut_format::ObjType::Way, 1).unwrap().len() >= 2, "way 1 should lie in two blocks");
+    let count = |s: &str| num(&values_on(&db, s)[0]);
+    assert_eq!(count("count of ways w with w:highway=primary"), 1.0);
+    assert_eq!(count("count of ways w with w:highway=primary and w:name='Old Road'"), 1.0);
+    assert_eq!(count("count of ways w with w:highway=secondary"), 2.0);
+    assert_eq!(count("count of ways w with w:highway=primary on 2015-02-01"), 2.0);
+    // the same through the reader's API, with and without geometry
+    for geometry in [false, true] {
+        let f = knut::Filter { geometry, ..knut::Filter::default().types(&[knut_format::ObjType::Way]).tag("highway", Some("primary")) };
+        let ids: Vec<i64> = r.snapshot(&knut_format::BBox::WORLD, r.header.tmax, &f).unwrap().iter().map(|f| f.id).collect();
+        assert_eq!(ids, vec![2], "geometry: {geometry}");
+    }
+}

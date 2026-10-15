@@ -622,6 +622,50 @@ pub fn finish_deferred(spec: &ScanSpec, deferred: Vec<Deferred>, sink: &mut dyn 
     Ok(())
 }
 
+/// Objects split over several segments: a later segment can lie in a block that the tag
+/// filters skipped because nothing in it matches, and still decides which version is current.
+/// Scans those blocks for the objects that matched elsewhere; they contribute stand-ins only.
+fn skipped_segments(db: &Db, spec: &ScanSpec, scanned: &[u32], defs: &[Deferred]) -> R<Vec<Deferred>> {
+    if matches!(spec.time, TimeMode::Events(..)) {
+        return Ok(Vec::new());
+    }
+    let mut ids: HashMap<ObjType, Vec<i64>> = HashMap::default();
+    for d in defs.iter().filter(|d| d.live) {
+        if let Item::Elem(e) = &d.item
+            && let Some(t) = e.otype
+        {
+            ids.entry(t).or_default().push(e.id);
+        }
+    }
+    let r = &db.reader;
+    let mut extra: Vec<u32> = Vec::new();
+    for (t, mut v) in ids {
+        v.sort_unstable();
+        v.dedup();
+        for nos in r.lookup_sorted(t, &v).map_err(rt_err)? {
+            extra.extend(nos.into_iter().filter(|no| {
+                scanned.binary_search(no).is_err() && r.block_entry(*no).is_ok_and(|e| e.obj_type == t)
+            }));
+        }
+    }
+    extra.sort_unstable();
+    extra.dedup();
+    let parts: Vec<R<Vec<Deferred>>> = extra
+        .par_iter()
+        .map(|&no| {
+            let mut def = Vec::new();
+            // nothing in these blocks matches the tag filters: only multi-segment versions count
+            scan_block(db, spec, no, &mut |_| Ok(()), &mut def)?;
+            Ok(def.into_iter().map(|d| Deferred { live: false, ..d }).collect())
+        })
+        .collect();
+    let mut out = Vec::new();
+    for p in parts {
+        out.extend(p?);
+    }
+    Ok(out)
+}
+
 /// Parallel fold over all matching items. Returns one accumulator per block (in block
 /// order) plus one for de-duplicated multi-segment objects.
 pub fn fold<A: Send>(
@@ -663,6 +707,7 @@ pub fn fold<A: Send>(
     if let Some(e) = first_error(errs) {
         return Err(e);
     }
+    defs.extend(skipped_segments(db, spec, &bl, &defs)?);
     let mut last = init();
     finish_deferred(spec, defs, &mut |it| step(&mut last, it))?;
     accs.push(last);

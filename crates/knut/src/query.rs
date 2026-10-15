@@ -566,6 +566,53 @@ impl Reader {
         Ok(out)
     }
 
+    /// Objects split over several segments: a later segment can lie in a block that the tag
+    /// filters skipped because nothing in it matches, and still decides which version is
+    /// current. Returns the version at `ts` from those blocks, as non-matching candidates.
+    fn skipped_segments(&self, scanned: &[u32], mut ids: Vec<(ObjType, i64)>, ts: i64) -> Result<Vec<(Feature, bool)>> {
+        ids.sort_unstable();
+        ids.dedup();
+        let mut extra: Vec<(u32, ObjType)> = Vec::new();
+        for t in ObjType::ALL {
+            let v: Vec<i64> = ids.iter().filter(|x| x.0 == t).map(|x| x.1).collect();
+            for nos in self.lookup_sorted(t, &v)? {
+                for no in nos {
+                    if scanned.binary_search(&no).is_err() && self.block_entry(no)?.obj_type == t {
+                        extra.push((no, t));
+                    }
+                }
+            }
+        }
+        extra.sort_unstable();
+        extra.dedup();
+        let parts: Vec<Result<Vec<(Feature, bool)>>> = extra
+            .par_iter()
+            .map(|&(no, t)| {
+                let wanted = |id: i64| ids.binary_search(&(t, id)).is_ok();
+                let tags = |_: &Tags| true;
+                let keep = |d: &knut_format::block::DirEntry, _: &[Meta], _: &[bool]| wanted(d.id);
+                let b = self.block_attrs(no, &knut_format::block::SegFilter { tags: &tags, keep: &keep })?;
+                let mut out = Vec::new();
+                for (si, s) in b.segs.iter().enumerate() {
+                    if s.obj_type() != t || !wanted(s.id) {
+                        continue;
+                    }
+                    if let Some(vi) = version_at(s, ts) {
+                        let mut f = version_feature(&b, si, vi)?;
+                        f.geometry = Geometry::None;
+                        out.push((f, false));
+                    }
+                }
+                Ok(out)
+            })
+            .collect();
+        let mut out = Vec::new();
+        for p in parts {
+            out.extend(p?);
+        }
+        Ok(out)
+    }
+
     /// State of all matching objects within `bbox` at time `ts`.
     pub fn snapshot(&self, bbox: &BBox, ts: i64, filter: &Filter) -> Result<Vec<Feature>> {
         let mut all = Vec::new();
@@ -595,11 +642,13 @@ impl Reader {
             pending: Vec<i64>,
             /// attribute-only candidates: (feature, matches); resolved per object below
             attr: Vec<(Feature, bool)>,
+            /// matching attribute-only candidates of objects with several segments
+            multi: Vec<(ObjType, i64)>,
         }
         let parts: Vec<Result<Partial>> = blocks
             .par_iter()
             .map(|&no| {
-                let mut p = Partial { features: Vec::new(), pending: Vec::new(), attr: Vec::new() };
+                let mut p = Partial { features: Vec::new(), pending: Vec::new(), attr: Vec::new(), multi: Vec::new() };
                 if !filter.geometry && !want_private && contains(bbox, &self.block_header(no)?.bbox) {
                     // Block lies inside the query box: no spatial test, no geometry needed.
                     // Segment time intervals are not exact without geometry, so the newest
@@ -620,6 +669,9 @@ impl Reader {
                         let mut f = version_feature(&b, si, vi)?;
                         f.geometry = Geometry::None;
                         let ok = f.meta.visible && c.meta_ok(&f.meta, &f.tags);
+                        if ok && s.flags & SEG_MULTI != 0 {
+                            p.multi.push((f.obj_type, f.id));
+                        }
                         if ok || s.flags & SEG_MULTI != 0 {
                             p.attr.push((f, ok));
                         }
@@ -694,15 +746,19 @@ impl Reader {
         let mut features = Vec::new();
         let mut pending = Vec::new();
         let mut attr = Vec::new();
+        let mut multi = Vec::new();
         for p in parts {
             let p = p?;
             features.extend(p.features);
             pending.extend(p.pending);
             attr.extend(p.attr);
+            multi.extend(p.multi);
         }
+        attr.extend(self.skipped_segments(&blocks, multi, ts)?);
+        // per object the newest version; of equal ones a matching one
         attr.sort_by(|a, b| {
-            (a.0.obj_type, a.0.id, std::cmp::Reverse(a.0.meta.version))
-                .cmp(&(b.0.obj_type, b.0.id, std::cmp::Reverse(b.0.meta.version)))
+            (a.0.obj_type, a.0.id, std::cmp::Reverse(a.0.meta.version), !a.1)
+                .cmp(&(b.0.obj_type, b.0.id, std::cmp::Reverse(b.0.meta.version), !b.1))
         });
         attr.dedup_by_key(|x| (x.0.obj_type, x.0.id));
         let attr_features: Vec<Feature> = attr.into_iter().filter(|x| x.1).map(|x| x.0).collect();
