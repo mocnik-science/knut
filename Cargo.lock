@@ -886,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "knut"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "knut-builder"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "bytemuck",
  "flate2",
@@ -922,7 +922,7 @@ dependencies = [
 
 [[package]]
 name = "knut-cli"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "knut-exec"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -968,7 +968,7 @@ dependencies = [
 
 [[package]]
 name = "knut-format"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "proptest",
  "rustc-hash",
@@ -980,21 +980,21 @@ dependencies = [
 
 [[package]]
 name = "knut-lang"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "knut-format",
 ]
 
 [[package]]
 name = "knut-plan"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "knut-lang",
 ]
 
 [[package]]
 name = "knut-py"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "knut-web"
-version = "2026.10.1"
+version = "2026.10.2"
 dependencies = [
  "knut-builder",
  "knut-exec",
