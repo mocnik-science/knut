@@ -136,6 +136,8 @@ History files contain personal data (uids, usernames). `--strip-users` removes t
 
 This application is written and maintained by Franz-Benjamin Mocnik, <mail@mocnik-science.net>.
 
-(c) by Franz-Benjamin Mocnik, 2023.
+(c) by Franz-Benjamin Mocnik, 2023-2026.
+
+Its parts written after September 2023 have been supported by the *EXDIGIT~(Excellence in Digital Sciences and Interdisciplinary Technologies)* project, funded by Land Salzburg under grant number 20204-WISS/263/6-6022.
 
 The code is licensed under the [MIT License](https://github.com/mocnik-science/knut/blob/master/LICENSE).
