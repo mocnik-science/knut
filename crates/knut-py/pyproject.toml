@@ -26,3 +26,4 @@ arrow = ["pyarrow>=14"]
 python-source = "python"
 module-name = "knut._knut"
 features = ["pyo3/extension-module"]
+strip = true
