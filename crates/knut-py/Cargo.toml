@@ -1,9 +1,13 @@
 [package]
 name = "knut-py"
-description = "Python bindings for knut"
+description = "Python bindings for knut (published on PyPI as `knut`)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+publish = false
 
 [lib]
 name = "_knut"

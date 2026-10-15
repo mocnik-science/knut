@@ -552,8 +552,8 @@ const App = {
 
       <div v-if="state.tab === 'about'" class="docs about">
         <h2>knut</h2>
-        <p><em>knut</em> is short for <em>knutpunkt</em>, the Swedish word for ‘junction’ or ‘node’, which is the building blocks of OpenStreetMap data.</p>
-        <p>It reads OpenStreetMap PBF files (with history) and converts them into its own compact, high-performance data format, which enables fast queries of OpenStreetMap data in Rust, on the command line, in Python, and in this web interface.</p>
+        <p><em>knut</em> is short for <em>knutpunkt</em>, the Swedish word for ‘junction’ or ‘node’, one of the building blocks of OpenStreetMap data.</p>
+        <p>It reads OpenStreetMap PBF files (with history) and converts them into its own compact, high-performance data format, which enables fast queries of OpenStreetMap data in Rust, in Python, on the command line, and in this web interface, using the <em>knut</em> query language.</p>
         <p><em>knut</em> has been created by Franz-Benjamin Mocnik, University of Salzburg, and is released open source.</p>
         <p>Copyright by Franz-Benjamin Mocnik, 2023–2026.</p>
         <p>Parts of this software have been supported by the <em>EXDIGIT&nbsp;(Excellence in Digital Sciences and Interdisciplinary Technologies)</em> project, funded by Land Salzburg under grant number 20204-WISS/263/6-6022.</p>

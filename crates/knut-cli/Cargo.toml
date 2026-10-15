@@ -1,9 +1,13 @@
 [package]
 name = "knut-cli"
-description = "knut command line tool"
+description = "Command line tool for knut: converts OpenStreetMap history and runs knut scripts, in the terminal or in the browser"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["science::geo", "command-line-utilities"]
 
 [[bin]]
 name = "knut"

@@ -1,9 +1,13 @@
 [package]
 name = "knut-web"
-description = "knut language: web interface on a map (`knut web`)"
+description = "Web interface for the knut query language with results on a map (`knut web`)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["science::geo", "web-programming::http-server", "visualization"]
 
 [dependencies]
 knut-exec.workspace = true

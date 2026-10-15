@@ -1,9 +1,13 @@
 [package]
 name = "knut-plan"
-description = "knut language: name resolution, type and unit checks, pushdown analysis"
+description = "Name resolution, type, and unit checks, and pushdown analysis for the knut query language"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["science::geo", "parser-implementations"]
 
 [dependencies]
 knut-lang.workspace = true

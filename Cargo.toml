@@ -28,6 +28,9 @@ version = "2026.10.1"
 edition = "2024"
 license = "MIT"
 rust-version = "1.85"
+repository = "https://github.com/mocnik-science/knut"
+readme = "README.md"
+keywords = ["openstreetmap", "query-language"]
 
 [workspace.dependencies]
 knut-format = { path = "crates/knut-format" }

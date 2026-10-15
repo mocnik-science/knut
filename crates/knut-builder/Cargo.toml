@@ -1,9 +1,13 @@
 [package]
 name = "knut-builder"
-description = "knut converter: OSM history PBF -> .knutdb"
+description = "Converts OpenStreetMap history PBF files into knut databases (.knutdb)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["science::geo", "encoding"]
 
 [dependencies]
 knut-format.workspace = true

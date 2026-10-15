@@ -1,9 +1,13 @@
 [package]
 name = "knut-exec"
-description = "knut language: executor for .knut scripts on .knutdb databases"
+description = "Executes scripts in the knut query language (.knut) on knut databases of OpenStreetMap history"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["science::geo", "database-implementations"]
 
 [dependencies]
 knut-format.workspace = true

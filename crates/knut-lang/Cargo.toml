@@ -1,9 +1,13 @@
 [package]
 name = "knut-lang"
-description = "knut language: lexer, parser, diagnostics"
+description = "Lexer, parser, and diagnostics of the knut query language for OpenStreetMap"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["science::geo", "parser-implementations"]
 
 [dependencies]
 knut-format.workspace = true

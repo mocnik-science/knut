@@ -1,6 +1,6 @@
 """knut: compact OpenStreetMap history files with a space-time index.
 
-*knut* is short for *knutpunkt*, the Swedish word for 'junction' or 'node', which is the
+*knut* is short for *knutpunkt*, the Swedish word for 'junction' or 'node', one of the
 building blocks of OpenStreetMap data.
 
 Query results implement the Arrow PyCapsule stream interface (``__arrow_c_stream__``),

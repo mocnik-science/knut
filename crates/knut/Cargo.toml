@@ -1,9 +1,13 @@
 [package]
 name = "knut"
-description = "knut mmap reader and query engine"
+description = "Reader and query engine for knut databases: compact OpenStreetMap history, memory-mapped, with a space-time index"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["science::geo", "database-implementations"]
 
 [features]
 default = ["arrow"]
