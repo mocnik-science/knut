@@ -13,6 +13,15 @@ function store(key, value) {
 function load(key, fallback) {
   try { const v = localStorage.getItem("knut-web:" + key); return v === null ? fallback : JSON.parse(v); } catch (_) { return fallback; }
 }
+/** Shakes an element briefly, e.g. the results panel when new results arrive. */
+function nudge(selector) {
+  const el = document.querySelector(selector);
+  if (!el) return;
+  el.classList.remove("nudge");
+  void el.offsetWidth; // restarts the animation
+  el.classList.add("nudge");
+  el.addEventListener("animationend", () => el.classList.remove("nudge"), { once: true });
+}
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -61,13 +70,39 @@ const Panel = {
     const collapsed = ref(load(props.side + ":collapsed", false));
     const max = ref(false);
     watch(collapsed, v => store(props.side + ":collapsed", v));
+    // width set by dragging the inner edge; null = the default from the stylesheet
+    const width = ref(load(props.side + ":width", null));
+    const dragging = ref(false);
+    function startResize(e) {
+      e.preventDefault();
+      const handle = e.currentTarget;
+      handle.setPointerCapture(e.pointerId);
+      dragging.value = true;
+      const r = el.value.getBoundingClientRect();
+      const move = ev => {
+        const w = props.side === "left" ? ev.clientX - r.left : r.right - ev.clientX;
+        width.value = Math.round(Math.max(260, Math.min(w, window.innerWidth - 120)));
+      };
+      const up = () => {
+        dragging.value = false;
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", up);
+        store(props.side + ":width", width.value);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", up);
+    }
+    const resetWidth = () => { width.value = null; store(props.side + ":width", null); };
     // how much of the map the panel covers at its side: the map controls sit next to it
     function publishInset() {
       if (!el.value) return;
       const r = el.value.getBoundingClientRect();
       const w = window.innerWidth;
-      const inset = max.value ? 0 : props.side === "left" ? Math.max(0, r.right) : Math.max(0, w - r.left);
+      // a collapsed panel always counts as its strip, also while it peeks out under the mouse
+      const peek = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--peek")) || 0;
+      const inset = max.value ? 0 : collapsed.value ? peek : props.side === "left" ? Math.max(0, r.right) : Math.max(0, w - r.left);
       document.documentElement.style.setProperty("--inset-" + props.side, inset + "px");
+      setTimeout(() => document.documentElement.classList.add("insets-ready"), 500);
     }
     onMounted(() => {
       publishInset();
@@ -81,10 +116,11 @@ const Panel = {
     const toggleCollapse = () => { collapsed.value = !collapsed.value; if (collapsed.value) max.value = false; };
     const outward = props.side === "left" ? ICONS.left : ICONS.right;
     const inward = props.side === "left" ? ICONS.right : ICONS.left;
-    return { el, collapsed, max, toggleMax, toggleCollapse, outward, inward, ICONS };
+    return { el, collapsed, max, toggleMax, toggleCollapse, outward, inward, ICONS, width, dragging, startResize, resetWidth };
   },
   template: `
-    <aside ref="el" :class="['panel', side, { collapsed, max }]" :aria-label="label">
+    <aside ref="el" :class="['panel', side, { collapsed, max, dragging }]" :style="width ? { '--w': width + 'px' } : null" :aria-label="label">
+      <div class="resizer" title="Drag to resize, double-click for the default width" @pointerdown="startResize" @dblclick="resetWidth"></div>
       <header>
         <slot name="header"></slot>
         <div class="tools">
@@ -170,9 +206,20 @@ const MapView = {
         style: (props.info && props.info.style) || OSM_STYLE,
         center: [10, 51], zoom: 4, attributionControl: { compact: true },
       }));
-      map.addControl(new maplibregl.NavigationControl(), "bottom-right");
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+      // without a compass, the map stays north up
+      map.dragRotate.disable();
+      map.touchZoomRotate.disableRotation();
+      map.keyboard.disableRotation();
       map.addControl(new maplibregl.ScaleControl(), "bottom-left");
       ready = new Promise(r => map.on("load", r));
+      // the attribution starts as the (i) button; a click opens it
+      const collapseAttribution = () => {
+        const a = el.value.querySelector(".maplibregl-ctrl-attrib");
+        if (a) { a.classList.remove("maplibregl-compact-show"); a.removeAttribute("open"); }
+      };
+      collapseAttribution();
+      map.once("load", collapseAttribution);
     });
 
     // room for the panels that cover the map
@@ -397,6 +444,7 @@ const App = {
         }
         state.results = res.outputs;
         state.visible = res.outputs.map(() => true);
+        if (res.outputs.length) nudge(".panel.right");
         map.value.show(res.outputs);
         finish();
       } catch (e) {
@@ -533,10 +581,6 @@ const App = {
           <h3>Database</h3>
           <input class="text" v-model="state.db" spellcheck="false" autocomplete="off"
             :placeholder="state.info && state.info.db ? state.info.db : 'path/to/file.knutdb'">
-          <p class="help">Used for every query. If this is empty, a query uses its own <code>knut_db = '…'</code>,
-            <template v-if="state.info && state.info.db">and otherwise <code>{{ state.info.db }}</code>, the database knut web was started with<template v-if="state.info.time"> (data from {{ state.info.time[0].slice(0, 10) }} to {{ state.info.time[1].slice(0, 10) }})</template>.</template>
-            <template v-else>which it must then contain.</template>
-            Relative paths start at the folder knut web was started in.</p>
         </section>
         <section>
           <h3>Appearance</h3>
@@ -546,7 +590,6 @@ const App = {
               <span v-html="t.icon"></span>{{ t.label }}
             </button>
           </div>
-          <p class="help">Automatic follows the setting of your system. The map always keeps its normal colours.</p>
         </section>
       </div>
 

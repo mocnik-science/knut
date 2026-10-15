@@ -12,7 +12,7 @@
   --ok: #2e8540;
   --shadow: 0 6px 24px rgba(20, 30, 50, 0.18);
   --radius: 10px;
-  --gap: 10px;
+  --gap: 6px;
   --peek: 30px;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --hl-keyword: #7a3e9d;
@@ -121,8 +121,27 @@ input[type=search], input.text {
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
   transition: transform 0.25s ease, width 0.2s ease;
 }
-.panel.left { left: var(--gap); width: min(460px, calc(100vw - 2 * var(--gap))); }
-.panel.right { right: var(--gap); width: min(480px, calc(100vw - 2 * var(--gap))); }
+.panel.left { left: var(--gap); width: min(var(--w, 460px), calc(100vw - 2 * var(--gap))); }
+.panel.right { right: var(--gap); width: min(var(--w, 480px), calc(100vw - 2 * var(--gap))); }
+/* the inner edge resizes the panel */
+.panel .resizer { position: absolute; top: var(--radius); bottom: var(--radius); width: 9px; cursor: ew-resize; z-index: 3; touch-action: none; }
+.panel.left .resizer { right: -5px; }
+.panel.right .resizer { left: -5px; }
+.panel .resizer::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 3px; border-radius: 2px; background: var(--accent); opacity: 0; transition: opacity 0.15s; }
+.panel .resizer:hover::after, .panel.dragging .resizer::after { opacity: 0.6; }
+.panel.collapsed .resizer, .panel.max .resizer { display: none; }
+.panel.dragging { transition: none; user-select: none; }
+/* new results: the panel moves briefly (`translate` leaves the sliding `transform` alone) */
+.panel.right.nudge { animation: nudge 0.6s ease-in-out; }
+@keyframes nudge {
+  0%, 100% { translate: 0 0; }
+  17% { translate: -8px 0; }
+  33% { translate: 5px 0; }
+  50% { translate: -5px 0; }
+  67% { translate: 3px 0; }
+  83% { translate: -2px 0; }
+}
+@media (prefers-reduced-motion: reduce) { .panel.right.nudge { animation: none; } }
 .panel.left.collapsed { transform: translateX(calc(-100% + var(--peek) - var(--gap))); }
 .panel.right.collapsed { transform: translateX(calc(100% - var(--peek) + var(--gap))); }
 .panel.max { top: 0; bottom: 0; left: 0; right: 0; width: auto; border-radius: 0; z-index: 10; transform: none; }
@@ -135,12 +154,16 @@ input[type=search], input.text {
 .panel h2 .meta { color: var(--fg-soft); font-weight: 400; margin-left: 6px; }
 .panel .tools { display: flex; gap: 2px; padding-bottom: 4px; }
 .panel .body { flex: 1; min-height: 0; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+/* collapsed: the whole strip opens the panel, with just a chevron; under the mouse the panel peeks out a little */
 .panel .handle {
-  display: none; position: absolute; top: 50%; transform: translateY(-50%);
-  width: calc(var(--peek) - 8px); height: 64px; padding: 0; border-radius: 7px; font-size: 18px;
+  display: none; position: absolute; top: 0; bottom: 0; width: calc(var(--peek) + 14px);
+  padding: 0; border: none; border-radius: 0; background: transparent; color: var(--fg-soft);
 }
-.panel.left .handle { right: 3px; }
-.panel.right .handle { left: 3px; }
+.panel .handle:hover { background: transparent; color: var(--fg); }
+.panel.left .handle { right: 0; padding-left: 14px; }
+.panel.right .handle { left: 0; padding-right: 14px; }
+.panel.left.collapsed:hover { transform: translateX(calc(-100% + var(--peek) + 14px - var(--gap))); }
+.panel.right.collapsed:hover { transform: translateX(calc(100% - var(--peek) - 14px + var(--gap))); }
 .panel.collapsed > :not(.handle) { visibility: hidden; }
 .panel.collapsed .handle { display: block; }
 
@@ -154,8 +177,6 @@ input[type=search], input.text {
 .settings section { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .settings section:last-child { border-bottom: none; }
 .settings h3 { margin: 4px 0 0; font-size: 13px; }
-.settings .help { color: var(--fg-soft); font-size: 12px; margin: 0; }
-.settings .help code { font: 11.5px var(--mono); background: var(--bg-code); padding: 0 3px; border-radius: 3px; }
 .settings input.text { font-family: var(--mono); font-size: 12px; }
 .themes { display: flex; gap: 8px; }
 .themes button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 6px; font-size: 12px; color: var(--fg-soft); }
@@ -228,8 +249,16 @@ input[type=search], input.text {
 
 /* ----- map controls next to the panels ------------------------------------------------ */
 
-.maplibregl-ctrl-bottom-right, .maplibregl-ctrl-top-right { right: var(--inset-right, 0px); transition: right 0.25s ease; }
-.maplibregl-ctrl-bottom-left, .maplibregl-ctrl-top-left { left: var(--inset-left, 0px); transition: left 0.25s ease; }
+/* the same distance to the panels as the panels to the window edge; at the bottom 8px more */
+.maplibregl-ctrl-bottom-left .maplibregl-ctrl { margin: 0 0 calc(var(--gap) + 8px) var(--gap); }
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl { margin: 0 var(--gap) calc(var(--gap) + 8px) 0; }
+.maplibregl-ctrl-top-left .maplibregl-ctrl { margin: var(--gap) 0 0 var(--gap); }
+.maplibregl-ctrl-top-right .maplibregl-ctrl { margin: var(--gap) var(--gap) 0 0; }
+.maplibregl-ctrl-bottom-right, .maplibregl-ctrl-top-right { right: var(--inset-right, 0px); }
+.maplibregl-ctrl-bottom-left, .maplibregl-ctrl-top-left { left: var(--inset-left, 0px); }
+/* they follow the panels, but do not slide in when the page loads */
+.insets-ready .maplibregl-ctrl-bottom-right, .insets-ready .maplibregl-ctrl-top-right { transition: right 0.25s ease; }
+.insets-ready .maplibregl-ctrl-bottom-left, .insets-ready .maplibregl-ctrl-top-left { transition: left 0.25s ease; }
 
 /* ----- map popups ------------------------------------------------------------------- */
 

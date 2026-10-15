@@ -4,7 +4,7 @@
 
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, placeholder } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, toggleLineComment } from "@codemirror/commands";
 import { StreamLanguage, HighlightStyle, syntaxHighlighting, bracketMatching } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { setDiagnostics, lintGutter } from "@codemirror/lint";
@@ -190,6 +190,8 @@ export function createEditor(parent, { doc = "", onChange, onRun, onEscape, hint
         keymap.of([
           { key: "Mod-Enter", run: () => { onRun && onRun(); return true; } },
           { key: "Escape", run: () => (onEscape ? onEscape() : false) },
+          // (un)comments the lines: ⌘⇧/ (on a German keyboard ⌘⇧7, which Safari and Chrome report as ⌘⇧&)
+          ...["Mod-Shift-/", "Mod-?", "Mod-Shift-7", "Mod-&"].map(key => ({ key, run: toggleLineComment })),
           ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap, ...completionKeymap, indentWithTab,
         ]),
         EditorView.updateListener.of(u => { if (u.docChanged && onChange) onChange(u.state.doc.toString()); }),
