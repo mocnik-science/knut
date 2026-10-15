@@ -377,15 +377,15 @@ pub fn distance_m(a: &Geom, b: &Geom) -> f64 {
         return haversine(*p, *q);
     }
     // containment
-    if let Some(p) = b.rep_point() {
-        if a.contains_point(p) {
-            return 0.0;
-        }
+    if let Some(p) = b.rep_point()
+        && a.contains_point(p)
+    {
+        return 0.0;
     }
-    if let Some(p) = a.rep_point() {
-        if b.contains_point(p) {
-            return 0.0;
-        }
+    if let Some(p) = a.rep_point()
+        && b.contains_point(p)
+    {
+        return 0.0;
     }
     let (ba, bb) = (a.bbox(), b.bbox());
     let far = haversine(ba.center(), bb.center());
@@ -520,7 +520,7 @@ pub fn assemble(pieces: Vec<(bool, Vec<i64>, Vec<P>)>) -> Geom {
     }
     let mut polys: Vec<(usize, Polygon)> = Vec::new();
     for i in 0..n {
-        if depth[i] % 2 == 0 {
+        if depth[i].is_multiple_of(2) {
             polys.push((i, Polygon { outer: rings[i].1.clone(), holes: Vec::new() }));
         }
     }
@@ -532,7 +532,7 @@ pub fn assemble(pieces: Vec<(bool, Vec<i64>, Vec<P>)>) -> Geom {
             for (k, (oi, poly)) in polys.iter().enumerate() {
                 if bbs[*oi].contains_box(&bbs[i]) && ring_contains(&poly.outer, p) {
                     let a = ring_area_deg(&poly.outer);
-                    if best.map_or(true, |b| a < b.1) {
+                    if best.is_none_or(|b| a < b.1) {
                         best = Some((k, a));
                     }
                 }

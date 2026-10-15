@@ -3,7 +3,6 @@ name = "knut-py"
 description = "Python bindings for knut"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 
 [lib]

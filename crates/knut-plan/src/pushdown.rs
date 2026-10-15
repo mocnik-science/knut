@@ -49,7 +49,7 @@ impl TagPred {
             TagPred::False => false,
             TagPred::Has(k) => get(k).is_some(),
             TagPred::Eq(k, v) => get(k) == Some(v.as_str()),
-            TagPred::In(k, vs) => get(k).map_or(false, |x| vs.iter().any(|v| v == x)),
+            TagPred::In(k, vs) => get(k).is_some_and(|x| vs.iter().any(|v| v == x)),
             TagPred::Not(p) => !p.eval(tags),
             TagPred::And(ps) => ps.iter().all(|p| p.eval(tags)),
             TagPred::Or(ps) => ps.iter().any(|p| p.eval(tags)),
@@ -206,10 +206,10 @@ pub fn extract(e: &Expr, var: &str, ti: &dyn TextIdents) -> Extracted {
             let Some((k, None)) = tag_of(l, var) else { return unknown };
             if let ExprKind::List(xs) = &r.kind {
                 let vals: Option<Vec<String>> = xs.iter().map(|x| text_of(x, ti)).collect();
-                if let Some(vals) = vals {
-                    if xs.iter().all(|x| !matches!(x.kind, ExprKind::Num(_))) {
-                        return Extracted { pred: TagPred::In(k.into(), vals), exact: true };
-                    }
+                if let Some(vals) = vals
+                    && xs.iter().all(|x| !matches!(x.kind, ExprKind::Num(_)))
+                {
+                    return Extracted { pred: TagPred::In(k.into(), vals), exact: true };
                 }
             }
             Extracted { pred: TagPred::Has(k.into()), exact: false }
@@ -275,10 +275,10 @@ fn walk_uses(e: &Expr, var: &str, f: &mut dyn FnMut(bool)) {
 pub fn fields_used(e: &Expr, var: &str) -> HashSet<String> {
     let mut out = HashSet::new();
     e.walk(&mut |x| {
-        if let ExprKind::Field(b, name, _) = &x.kind {
-            if is_var(b, var) {
-                out.insert(name.clone());
-            }
+        if let ExprKind::Field(b, name, _) = &x.kind
+            && is_var(b, var)
+        {
+            out.insert(name.clone());
         }
     });
     out

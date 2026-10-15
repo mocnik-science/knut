@@ -105,12 +105,12 @@ impl Db {
                     let Ok(b) = self.reader.block(*no) else { return out };
                     for &id in ids {
                         for &(si, k) in b.private_slots(id) {
-                            if let SegmentBody::Way { slots, .. } = &b.segs[si as usize].body {
-                                if let Some(es) = &slots[k as usize].private {
-                                    for &t in &want[&id] {
-                                        if let Some(e) = entry_at(es, t) {
-                                            out.push(((id, t), e.visible.then_some((e.lon, e.lat))));
-                                        }
+                            if let SegmentBody::Way { slots, .. } = &b.segs[si as usize].body
+                                && let Some(es) = &slots[k as usize].private
+                            {
+                                for &t in &want[&id] {
+                                    if let Some(e) = entry_at(es, t) {
+                                        out.push(((id, t), e.visible.then_some((e.lon, e.lat))));
                                     }
                                 }
                             }
@@ -130,11 +130,11 @@ impl Db {
                             if !b.dirs[si as usize].valid_at(rt) {
                                 continue;
                             }
-                            if let SegmentBody::Node(vs) = &s.body {
-                                if let Some(vi) = version_at(vs, |v| v.meta.timestamp, t) {
-                                    let v = &vs[vi];
-                                    out.push(((id, t), v.meta.visible.then_some((v.lon, v.lat))));
-                                }
+                            if let SegmentBody::Node(vs) = &s.body
+                                && let Some(vi) = version_at(vs, |v| v.meta.timestamp, t)
+                            {
+                                let v = &vs[vi];
+                                out.push(((id, t), v.meta.visible.then_some((v.lon, v.lat))));
                             }
                         }
                     }

@@ -343,7 +343,7 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
         }
         match &time {
             TimeMode::State(t) => {
-                v.iter().zip(ok).rev().find(|(m, _)| m.timestamp <= *t).map_or(false, |(m, ok)| m.visible && *ok)
+                v.iter().zip(ok).rev().find(|(m, _)| m.timestamp <= *t).is_some_and(|(m, ok)| m.visible && *ok)
             }
             TimeMode::Events(a, b) => v.iter().zip(ok).any(|(m, ok)| *ok && !m.continuation && m.timestamp >= *a && m.timestamp < *b),
             _ => ok.iter().any(|x| *x),
@@ -384,7 +384,7 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
             continue;
         }
         // private nodes inside way segments
-        if let (true, SegmentBody::Way { slots, .. }) = (private, &s.body) {
+        if private && let SegmentBody::Way { slots, .. } = &s.body {
             for sl in slots {
                 let Some(es) = &sl.private else { continue };
                 if history {
@@ -404,12 +404,11 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
                     TimeMode::History => Vec::new(),
                 };
                 for (e, at) in picks {
-                    if e.visible {
-                        if let Some(reg) = &spec.region {
-                            if !reg.contains(geom::e7((e.lon, e.lat))) {
-                                continue;
-                            }
-                        }
+                    if e.visible
+                        && let Some(reg) = &spec.region
+                        && !reg.contains(geom::e7((e.lon, e.lat)))
+                    {
+                        continue;
                     }
                     let el = Elem::new(EKind::Node, Some(ObjType::Node), sl.node_id, ver_priv(e), at);
                     if e.visible {
@@ -495,12 +494,12 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
     // shared node positions for ways that need geometry
     let mut pending: Vec<(i64, i64)> = Vec::new();
     for c in &cands {
-        if let Some(l) = &c.local {
-            if spec.need_geom || c.partial {
-                for (n, p) in c.elem.v.nodes.iter().zip(l) {
-                    if p.is_none() {
-                        pending.push((*n, c.elem.at));
-                    }
+        if let Some(l) = &c.local
+            && (spec.need_geom || c.partial)
+        {
+            for (n, p) in c.elem.v.nodes.iter().zip(l) {
+                if p.is_none() {
+                    pending.push((*n, c.elem.at));
                 }
             }
         }
@@ -549,16 +548,16 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
                 let _ = c.elem.geom.set(Arc::new(g));
             }
         }
-        if c.partial {
-            if let Some(reg) = &spec.region {
-                let p = match c.elem.geom.get() {
-                    Some(g) if !g.is_empty() => g.rep_point(),
-                    _ => c.elem.bbox.map(|b| b.center()),
-                };
-                match p {
-                    Some(p) if reg.contains(p) => {}
-                    _ => continue,
-                }
+        if c.partial
+            && let Some(reg) = &spec.region
+        {
+            let p = match c.elem.geom.get() {
+                Some(g) if !g.is_empty() => g.rep_point(),
+                _ => c.elem.bbox.map(|b| b.center()),
+            };
+            match p {
+                Some(p) if reg.contains(p) => {}
+                _ => continue,
             }
         }
         let it = Item::Elem(Arc::new(c.elem));
@@ -588,7 +587,7 @@ pub fn finish_deferred(spec: &ScanSpec, deferred: Vec<Deferred>, sink: &mut dyn 
         }
         match d.item {
             Item::Elem(e) => {
-                if !events && newest.get(&(e.otype, e.id, e.at)).map_or(false, |&n| n > e.v.version) {
+                if !events && newest.get(&(e.otype, e.id, e.at)).is_some_and(|&n| n > e.v.version) {
                     continue;
                 }
                 // state/series: one per object and moment; events: one per version

@@ -35,36 +35,36 @@ pub fn restrict(
     let mut base = base;
     let mut region = region;
     let mut time = time;
-    if let Some(q) = base.is_query() {
-        if q.seq.is_none() {
-            let mut spec = q.spec.clone();
-            let default_time = matches!(spec.time, TimeMode::State(t) if t == ctx.latest());
-            if let Some(t) = time {
-                if default_time {
-                    spec.time = ctx.time_mode(t, &scope)?.0;
-                    time = None;
+    if let Some(q) = base.is_query()
+        && q.seq.is_none()
+    {
+        let mut spec = q.spec.clone();
+        let default_time = matches!(spec.time, TimeMode::State(t) if t == ctx.latest());
+        if let Some(t) = time
+            && default_time
+        {
+            spec.time = ctx.time_mode(t, &scope)?.0;
+            time = None;
+        }
+        if let Some(r) = &region
+            && spec.region.is_none()
+        {
+            spec.region = Some(r.clone());
+            region = None;
+        }
+        for p in &preds {
+            for v in &vars {
+                let x = pushdown::extract(p, v, ctx.chk);
+                if !x.pred.is_true() {
+                    spec.pred = if spec.pred.is_true() { x.pred } else { TagPred::And(vec![spec.pred.clone(), x.pred]) };
                 }
+                spec.need_geom |= pushdown::needs_geometry(p, v);
             }
-            if let Some(r) = &region {
-                if spec.region.is_none() {
-                    spec.region = Some(r.clone());
-                    region = None;
-                }
-            }
-            for p in &preds {
-                for v in &vars {
-                    let x = pushdown::extract(p, v, ctx.chk);
-                    if !x.pred.is_true() {
-                        spec.pred = if spec.pred.is_true() { x.pred } else { TagPred::And(vec![spec.pred.clone(), x.pred]) };
-                    }
-                    spec.need_geom |= pushdown::needs_geometry(p, v);
-                }
-            }
-            let nq = Query { spec, vars: q.vars.clone(), preds: q.preds.clone(), scope: q.scope.clone(), seq: None };
-            base = Arc::new(SetV::lazy(SetSrc::Query(Arc::new(nq))));
-            if preds.is_empty() && region.is_none() && time.is_none() {
-                return Ok(base);
-            }
+        }
+        let nq = Query { spec, vars: q.vars.clone(), preds: q.preds.clone(), scope: q.scope.clone(), seq: None };
+        base = Arc::new(SetV::lazy(SetSrc::Query(Arc::new(nq))));
+        if preds.is_empty() && region.is_none() && time.is_none() {
+            return Ok(base);
         }
     }
     let tfilter: Option<(i64, i64)> = match time {
@@ -87,7 +87,7 @@ pub fn restrict(
                 }
             }
             if let Some(r) = &region {
-                return Ok(ctx.rep_point(v).map_or(false, |p| r.contains(p)));
+                return Ok(ctx.rep_point(v).is_some_and(|p| r.contains(p)));
             }
             Ok(true)
         }))
@@ -168,14 +168,14 @@ fn add(ctx: &Ctx, func: OfFunc, acc: &mut Acc, v: &Value, hit: bool, span: Span,
                 return Err(e607(func, span, set_txt));
             }
             let Some(x) = ctx.to_num(v, None, span)? else { return Ok(()) };
-            if let Some(t) = tmpl {
-                if t.dim != x.dim {
-                    return Err(RtErr::fatal(Diagnostic::error(
-                        "E306",
-                        span,
-                        Text2::new("These values have different measures and cannot be added.", "Diese Werte haben verschiedene Maße und lassen sich nicht addieren."),
-                    )));
-                }
+            if let Some(t) = tmpl
+                && t.dim != x.dim
+            {
+                return Err(RtErr::fatal(Diagnostic::error(
+                    "E306",
+                    span,
+                    Text2::new("These values have different measures and cannot be added.", "Diese Werte haben verschiedene Maße und lassen sich nicht addieren."),
+                )));
             }
             *s += x.v;
             *n += 1;
@@ -319,17 +319,17 @@ pub fn of_call(ctx: &Ctx, e: &'static Expr, func: OfFunc, fsp: Span, operand: &'
         }
         OfOperand::Expr(x) => {
             let v = ctx.eval(x, sc)?;
-            if let Value::Elem(_) = v {
-                if !matches!(func, OfFunc::Days | OfFunc::Weeks | OfFunc::Months | OfFunc::Years | OfFunc::Earliest | OfFunc::Latest) {
-                    return Err(RtErr::fatal(Diagnostic::error(
-                        "E601",
-                        x.span,
-                        Text2::new(
-                            format!("\"{} of\" expects a set, but got a single element.", func.name()),
-                            format!("\"{} of\" erwartet eine Menge, hat aber ein einzelnes Element bekommen.", func.name()),
-                        ),
-                    )));
-                }
+            if let Value::Elem(_) = v
+                && !matches!(func, OfFunc::Days | OfFunc::Weeks | OfFunc::Months | OfFunc::Years | OfFunc::Earliest | OfFunc::Latest)
+            {
+                return Err(RtErr::fatal(Diagnostic::error(
+                    "E601",
+                    x.span,
+                    Text2::new(
+                        format!("\"{} of\" expects a set, but got a single element.", func.name()),
+                        format!("\"{} of\" erwartet eine Menge, hat aber ein einzelnes Element bekommen.", func.name()),
+                    ),
+                )));
             }
             (v, clause_vars.clone(), Vec::new(), ctx.text(x.span).to_string())
         }
@@ -350,24 +350,25 @@ pub fn of_call(ctx: &Ctx, e: &'static Expr, func: OfFunc, fsp: Span, operand: &'
         }
     }
     // aggregate applied to each group of a grouped set (`on each` results, groups of sets)
-    if let Value::Grouped(g) = &src {
-        if g.rows.iter().all(|r| matches!(r.value, Value::Set(_) | Value::List(_))) && !g.rows.is_empty() {
-            let mut rows = Vec::new();
-            for r in &g.rows {
-                let v = of_values(ctx, e, func, cl, &r.value, &vars, preds.clone(), measured, sc, &set_txt)?;
-                rows.push(Group { key: r.key.clone(), value: v, count: r.count, items: None });
-            }
-            return Ok(Value::Grouped(Arc::new(Grouped { key_names: g.key_names.clone(), value_name: func.name().into(), rows })));
+    if let Value::Grouped(g) = &src
+        && g.rows.iter().all(|r| matches!(r.value, Value::Set(_) | Value::List(_)))
+        && !g.rows.is_empty()
+    {
+        let mut rows = Vec::new();
+        for r in &g.rows {
+            let v = of_values(ctx, e, func, cl, &r.value, &vars, preds.clone(), measured, sc, &set_txt)?;
+            rows.push(Group { key: r.key.clone(), value: v, count: r.count, items: None });
         }
+        return Ok(Value::Grouped(Arc::new(Grouped { key_names: g.key_names.clone(), value_name: func.name().into(), rows })));
     }
     let src = match &src {
         Value::Elem(_) => Value::List(Arc::new(vec![src.clone()])),
         _ => src,
     };
-    if measured.is_none() {
-        if let Some(w) = &cl.with {
-            preds.push(w);
-        }
+    if measured.is_none()
+        && let Some(w) = &cl.with
+    {
+        preds.push(w);
     }
     of_values(ctx, e, func, cl, &src, &vars, preds, measured, sc, &set_txt)
 }
@@ -400,33 +401,32 @@ fn of_values(
     // grouping
     let mut gk: Vec<GKey> = Vec::new();
     let mut key_names: Vec<String> = Vec::new();
-    let on_each = set.is_query().filter(|q| matches!(q.spec.time, TimeMode::Series(_))).and_then(|_| match series_time(cl, e) {
-        Some(TimeRef::OnEach { unit, .. }) => Some(*unit),
-        _ => None,
-    });
-    if let Some(unit) = on_each {
-        gk.push(GKey::Series(unit));
+    if let Some(q) = set.is_query()
+        && let TimeMode::Series(_) = q.spec.time
+        && let Some(TimeRef::OnEach { unit, .. }) = series_time(cl, e)
+    {
+        gk.push(GKey::Series(*unit));
         key_names.push(unit.name().into());
-    } else if let Some(q) = set.is_query() {
-        if let TimeMode::Series(starts) = &q.spec.time {
-            // series defined in the selection: find its unit from the step
-            let u = if starts.len() > 1 {
-                let d = starts[1] - starts[0];
-                if d <= 86_400 {
-                    TimeUnit::Day
-                } else if d <= 7 * 86_400 {
-                    TimeUnit::Week
-                } else if d <= 31 * 86_400 {
-                    TimeUnit::Month
-                } else {
-                    TimeUnit::Year
-                }
+    } else if let Some(q) = set.is_query()
+        && let TimeMode::Series(starts) = &q.spec.time
+    {
+        // series defined in the selection: find its unit from the step
+        let u = if starts.len() > 1 {
+            let d = starts[1] - starts[0];
+            if d <= 86_400 {
+                TimeUnit::Day
+            } else if d <= 7 * 86_400 {
+                TimeUnit::Week
+            } else if d <= 31 * 86_400 {
+                TimeUnit::Month
             } else {
                 TimeUnit::Year
-            };
-            gk.push(GKey::Series(u));
-            key_names.push(u.name().into());
-        }
+            }
+        } else {
+            TimeUnit::Year
+        };
+        gk.push(GKey::Series(u));
+        key_names.push(u.name().into());
     }
     let mut chunk = None;
     let mut hints = Hints::default();
@@ -571,10 +571,10 @@ fn of_values(
                 .map(|r| r.area_m2())
                 .or_else(|| ctx.db_arc().map(|d| d.extent.area_km2() * 1e6))
                 .unwrap_or(0.0);
-            if let Value::Num(n) = v {
-                if area > 0.0 {
-                    v = Value::num(n.v / (area / 1e6));
-                }
+            if let Value::Num(n) = v
+                && area > 0.0
+            {
+                v = Value::num(n.v / (area / 1e6));
             }
         }
         return Ok(v);
@@ -588,13 +588,13 @@ fn of_values(
         } else {
             finish(ctx, func, acc, span, set_txt)?
         };
-        if func == OfFunc::Density {
-            if let Some(Value::Elem(_)) | Some(Value::Region(_)) = ks.last() {
-                let r = ctx.region_of(ks.last().unwrap(), span)?;
-                let a = r.area_m2() / 1e6;
-                if let Value::Num(x) = v {
-                    v = if a > 0.0 { Value::num(x.v / a) } else { Value::None };
-                }
+        if func == OfFunc::Density
+            && let Some(Value::Elem(_)) | Some(Value::Region(_)) = ks.last()
+        {
+            let r = ctx.region_of(ks.last().unwrap(), span)?;
+            let a = r.area_m2() / 1e6;
+            if let Value::Num(x) = v {
+                v = if a > 0.0 { Value::num(x.v / a) } else { Value::None };
             }
         }
         out.push(Group { key: key_value(ks), value: v, count: n, items: None });
@@ -631,7 +631,7 @@ fn share_hit(ctx: &Ctx, pred: Option<&'static Expr>, region: Option<&Region>, v:
         hit &= ctx.truthy(p, sc)?;
     }
     if let Some(r) = region {
-        hit &= ctx.rep_point(v).map_or(false, |p| r.contains(p));
+        hit &= ctx.rep_point(v).is_some_and(|p| r.contains(p));
     }
     Ok(hit)
 }

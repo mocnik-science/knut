@@ -166,7 +166,7 @@ pub fn export(pbf: &Path, dir: &Path, zstd_level: i32) -> Result<(), String> {
         let path = dir.join(format!("{}s.parquet", t.name()));
         let props = WriterProperties::builder()
             .set_compression(Compression::ZSTD(ZstdLevel::try_new(zstd_level).map_err(|e| e.to_string())?))
-            .set_max_row_group_size(1 << 20)
+            .set_max_row_group_row_count(Some(1 << 20))
             .build();
         let f = File::create(&path).map_err(|e| e.to_string())?;
         let mut w = ArrowWriter::try_new(f, schema(t), Some(props)).map_err(|e| e.to_string())?;

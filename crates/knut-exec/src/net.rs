@@ -166,12 +166,12 @@ impl Net {
                     bbox.add(*pt);
                     (pts.len() - 1) as u32
                 });
-                if let Some(pi) = prev {
-                    if pi != i {
-                        let len = geom::haversine(pts[pi as usize], pts[i as usize]) as f32;
-                        raw.push((pi, Edge { to: i, len, way: wi, fwd: true }));
-                        raw.push((i, Edge { to: pi, len, way: wi, fwd: false }));
-                    }
+                if let Some(pi) = prev
+                    && pi != i
+                {
+                    let len = geom::haversine(pts[pi as usize], pts[i as usize]) as f32;
+                    raw.push((pi, Edge { to: i, len, way: wi, fwd: true }));
+                    raw.push((i, Edge { to: pi, len, way: wi, fwd: false }));
                 }
                 prev = Some(i);
             }
@@ -270,17 +270,17 @@ impl Net {
                                 continue;
                             }
                             let d = geom::haversine(p, self.pts[n as usize]);
-                            if best.map_or(true, |b| d < b.1) {
+                            if best.is_none_or(|b| d < b.1) {
                                 best = Some((n, d));
                             }
                         }
                     }
                 }
             }
-            if let Some(b) = best {
-                if b.1 < r as f64 * GRID * 111_000.0 * 0.5 {
-                    return best;
-                }
+            if let Some(b) = best
+                && b.1 < r as f64 * GRID * 111_000.0 * 0.5
+            {
+                return best;
             }
         }
         best

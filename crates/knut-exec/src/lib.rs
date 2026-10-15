@@ -156,20 +156,19 @@ pub fn prepare(src: &str, file: Option<&str>, base_dir: &Path, opts: &Options) -
             };
             for e in es {
                 e.walk(&mut |x| {
-                    if let ExprKind::Special(s) = &x.kind {
-                        if let Special::Dataset(f) = &**s {
-                            if !dataset::resolve(&ctx, f).exists() {
-                                let p = dataset::resolve(&ctx, f).display().to_string();
-                                extra.push(
-                                    Diagnostic::error(
-                                        "E213",
-                                        x.span,
-                                        Text2::new(format!("The data set '{f}' does not exist."), format!("Den Datensatz '{f}' gibt es nicht.")),
-                                    )
-                                    .why(format!("Looked for {p}."), format!("Gesucht wurde {p}.")),
-                                );
-                            }
-                        }
+                    if let ExprKind::Special(s) = &x.kind
+                        && let Special::Dataset(f) = &**s
+                        && !dataset::resolve(&ctx, f).exists()
+                    {
+                        let p = dataset::resolve(&ctx, f).display().to_string();
+                        extra.push(
+                            Diagnostic::error(
+                                "E213",
+                                x.span,
+                                Text2::new(format!("The data set '{f}' does not exist."), format!("Den Datensatz '{f}' gibt es nicht.")),
+                            )
+                            .why(format!("Looked for {p}."), format!("Gesucht wurde {p}.")),
+                        );
                     }
                 });
             }
@@ -211,7 +210,7 @@ pub fn run_source(src: &str, file: Option<&str>, base_dir: &Path, opts: &Options
     let (prep, diags, lang) = prepare(src, file, base_dir, opts);
     let errors = diags.iter().filter(|d| d.is_error()).count();
     let warnings = diags.len() - errors;
-    let ignore = prep.as_ref().map_or(false, |p| p.chk.settings.ignore_warnings);
+    let ignore = prep.as_ref().is_some_and(|p| p.chk.settings.ignore_warnings);
     let stop = errors > 0 || (warnings > 0 && !ignore);
     if !diags.is_empty() {
         render_all(&diags, src, file, lang, err);

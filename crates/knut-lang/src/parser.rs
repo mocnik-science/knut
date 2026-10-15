@@ -150,7 +150,7 @@ impl<'a> Parser<'a> {
             return Ok(self.bump().span);
         }
         let cur = self.span();
-        let later = matches!(self.tok(), Tok::Eof) || self.src.get(open.end as usize..cur.start as usize).map_or(false, |x| x.contains('\n'));
+        let later = matches!(self.tok(), Tok::Eof) || self.src.get(open.end as usize..cur.start as usize).is_some_and(|x| x.contains('\n'));
         if !later {
             return self.expect(t);
         }
@@ -214,13 +214,13 @@ impl<'a> Parser<'a> {
         if !matches!(t.tok, Tok::Newline | Tok::Eof) {
             d = d.why(format!("Expected {exp_en}."), format!("Erwartet wurde {exp_de}."));
         }
-        if let Tok::Ident(w) = &t.tok {
-            if KEYWORDS.contains(&w.as_str()) {
-                d = d.why(
-                    format!("\"{w}\" is a keyword and cannot stand here."),
-                    format!("\"{w}\" ist ein Schlüsselwort und kann hier nicht stehen."),
-                );
-            }
+        if let Tok::Ident(w) = &t.tok
+            && KEYWORDS.contains(&w.as_str())
+        {
+            d = d.why(
+                format!("\"{w}\" is a keyword and cannot stand here."),
+                format!("\"{w}\" ist ein Schlüsselwort und kann hier nicht stehen."),
+            );
         }
         self.diags.push(d);
     }
@@ -307,14 +307,14 @@ impl<'a> Parser<'a> {
 
     fn try_lambda(&mut self) -> PResult<Option<Expr>> {
         let start = self.span();
-        if let Tok::Ident(n) = self.tok().clone() {
-            if *self.tok_at(1) == Tok::FatArrow {
-                self.bump();
-                self.bump();
-                let body = self.expr()?;
-                let span = start.to(body.span);
-                return Ok(Some(Expr::new(ExprKind::Lambda(vec![n], Box::new(body)), span)));
-            }
+        if let Tok::Ident(n) = self.tok().clone()
+            && *self.tok_at(1) == Tok::FatArrow
+        {
+            self.bump();
+            self.bump();
+            let body = self.expr()?;
+            let span = start.to(body.span);
+            return Ok(Some(Expr::new(ExprKind::Lambda(vec![n], Box::new(body)), span)));
         }
         if *self.tok() == Tok::LParen {
             let mut k = 1;
@@ -655,10 +655,10 @@ impl<'a> Parser<'a> {
             if let ExprKind::Num(v) = e.kind {
                 return Ok(Expr::new(ExprKind::Num(-v), sp));
             }
-            if let ExprKind::Unit(inner, u, us) = &e.kind {
-                if let ExprKind::Num(v) = inner.kind {
-                    return Ok(Expr::new(ExprKind::Unit(Box::new(Expr::new(ExprKind::Num(-v), sp)), u, *us), sp));
-                }
+            if let ExprKind::Unit(inner, u, us) = &e.kind
+                && let ExprKind::Num(v) = inner.kind
+            {
+                return Ok(Expr::new(ExprKind::Unit(Box::new(Expr::new(ExprKind::Num(-v), sp)), u, *us), sp));
             }
             return Ok(Expr::new(ExprKind::Neg(Box::new(e)), sp));
         }
@@ -684,7 +684,7 @@ impl<'a> Parser<'a> {
     fn quantity(&mut self) -> PResult<Expr> {
         let e = self.postfix()?;
         let unit_ok = matches!(e.kind, ExprKind::Num(_)) || matches!(e.kind, ExprKind::Tag(_, _, None));
-        if let Some((u, sp, n)) = if unit_ok { self.peek_unit() } else { None } {
+        if unit_ok && let Some((u, sp, n)) = self.peek_unit() {
             self.p += n;
             let span = e.span.to(sp);
             return Ok(Expr::new(ExprKind::Unit(Box::new(e), u, sp), span));
@@ -869,20 +869,19 @@ impl<'a> Parser<'a> {
                     return self.box_lit(None);
                 }
                 // 7 Mar 2020
-                if let Tok::Ident(m) = self.tok_at(1).clone() {
-                    if let Some(mo) = dates::month_name(&m) {
-                        if let Tok::Num(y) = *self.tok_at(2) {
-                            self.p += 3;
-                            let end = self.prev_span();
-                            return match dates::day(y as i64, mo, v as u32) {
-                                Some(d) if v.fract() == 0.0 => Ok(Expr::new(ExprKind::Date(d), sp.to(end))),
-                                _ => {
-                                    self.bad_date(sp.to(end));
-                                    Err(())
-                                }
-                            };
+                if let Tok::Ident(m) = self.tok_at(1).clone()
+                    && let Some(mo) = dates::month_name(&m)
+                    && let Tok::Num(y) = *self.tok_at(2)
+                {
+                    self.p += 3;
+                    let end = self.prev_span();
+                    return match dates::day(y as i64, mo, v as u32) {
+                        Some(d) if v.fract() == 0.0 => Ok(Expr::new(ExprKind::Date(d), sp.to(end))),
+                        _ => {
+                            self.bad_date(sp.to(end));
+                            Err(())
                         }
-                    }
+                    };
                 }
                 self.bump();
                 Ok(Expr::new(ExprKind::Num(v), sp))
@@ -1105,65 +1104,67 @@ impl<'a> Parser<'a> {
             let fsp = sp.to(self.span());
             return self.of_call_from(f, fsp, sp);
         }
-        if let Some(f) = OfFunc::parse(&w) {
-            if self.is_kw_at(1, "of") {
-                return self.of_call(f, sp);
-            }
+        if let Some(f) = OfFunc::parse(&w)
+            && self.is_kw_at(1, "of")
+        {
+            return self.of_call(f, sp);
         }
         // `changesets from … to …`: selection without a variable
-        if let Some((kind, true)) = Kind::parse(&w) {
-            if self.is_kw_at(1, "within") || self.is_kw_at(1, "on") || self.is_kw_at(1, "from") {
-                self.bump();
-                let pattern = vec![PatternItem { kind, plural: true, var: "_".into(), var_span: sp, kind_span: sp }];
-                let mut c = Clauses::default();
-                self.clauses(&mut c, false)?;
-                let sel = Selection {
-                    source: None,
-                    pick: None,
-                    pattern,
-                    seq_threshold: None,
-                    randomly: false,
-                    seed: None,
-                    var_pred: None,
-                    cond: None,
-                    within: c.within,
-                    time: c.time,
-                    order: c.order,
-                };
-                let end = self.prev_span();
-                return Ok(Expr::new(ExprKind::Select(Box::new(sel)), sp.to(end)));
-            }
+        if let Some((kind, true)) = Kind::parse(&w)
+            && (self.is_kw_at(1, "within") || self.is_kw_at(1, "on") || self.is_kw_at(1, "from"))
+        {
+            self.bump();
+            let pattern = vec![PatternItem { kind, plural: true, var: "_".into(), var_span: sp, kind_span: sp }];
+            let mut c = Clauses::default();
+            self.clauses(&mut c, false)?;
+            let sel = Selection {
+                source: None,
+                pick: None,
+                pattern,
+                seq_threshold: None,
+                randomly: false,
+                seed: None,
+                var_pred: None,
+                cond: None,
+                within: c.within,
+                time: c.time,
+                order: c.order,
+            };
+            let end = self.prev_span();
+            return Ok(Expr::new(ExprKind::Select(Box::new(sel)), sp.to(end)));
         }
         // selections: `area A with …`
-        if let Some((_, _)) = Kind::parse(&w) {
-            if let Tok::Ident(v) = self.tok_at(1) {
-                if !KEYWORDS.contains(&v.as_str()) {
-                    return self.selection(None);
-                }
-            }
+        if let Some((_, _)) = Kind::parse(&w)
+            && let Tok::Ident(v) = self.tok_at(1)
+            && !KEYWORDS.contains(&v.as_str())
+        {
+            return self.selection(None);
         }
         // `homes h with …`: filter over a named set
-        if let Tok::Ident(v) = self.tok_at(1).clone() {
-            if !KEYWORDS.contains(&v.as_str()) && !KEYWORDS.contains(&w.as_str()) && Kind::parse(&w).is_none() && units::unit(&v).map_or(true, |_| self.is_kw_at(2, "with")) {
-                self.bump();
-                let src = Expr::new(ExprKind::Ident(w), sp);
-                let (var, var_span) = self.ident()?;
-                let pattern = vec![PatternItem { kind: Kind::Any, plural: true, var, var_span, kind_span: var_span }];
-                let mut e = self.selection_rest(None, sp, pattern)?;
-                let ExprKind::Select(sel) = &mut e.kind else { unreachable!() };
-                sel.source = Some(Box::new(src));
-                e.span = sp.to(e.span);
-                return Ok(e);
-            }
+        if let Tok::Ident(v) = self.tok_at(1).clone()
+            && !KEYWORDS.contains(&v.as_str())
+            && !KEYWORDS.contains(&w.as_str())
+            && Kind::parse(&w).is_none()
+            && units::unit(&v).is_none_or(|_| self.is_kw_at(2, "with"))
+        {
+            self.bump();
+            let src = Expr::new(ExprKind::Ident(w), sp);
+            let (var, var_span) = self.ident()?;
+            let pattern = vec![PatternItem { kind: Kind::Any, plural: true, var, var_span, kind_span: var_span }];
+            let mut e = self.selection_rest(None, sp, pattern)?;
+            let ExprKind::Select(sel) = &mut e.kind else { unreachable!() };
+            sel.source = Some(Box::new(src));
+            e.span = sp.to(e.span);
+            return Ok(e);
         }
         // `Mar 2020`
-        if let Some(m) = dates::month_name(&w) {
-            if let Tok::Num(y) = *self.tok_at(1) {
-                if y.fract() == 0.0 && (1000.0..10000.0).contains(&y) {
-                    self.p += 2;
-                    return Ok(Expr::new(ExprKind::Date(dates::month(y as i64, m).unwrap()), sp.to(self.prev_span())));
-                }
-            }
+        if let Some(m) = dates::month_name(&w)
+            && let Tok::Num(y) = *self.tok_at(1)
+            && y.fract() == 0.0
+            && (1000.0..10000.0).contains(&y)
+        {
+            self.p += 2;
+            return Ok(Expr::new(ExprKind::Date(dates::month(y as i64, m).unwrap()), sp.to(self.prev_span())));
         }
         self.bump();
         Ok(Expr::new(ExprKind::Ident(w), sp))
@@ -1193,12 +1194,13 @@ impl<'a> Parser<'a> {
         };
         let pick = Pick { exactly, n, span: s.to(self.prev_span()) };
         // `pick k in SET …`
-        if let Tok::Ident(v) = self.tok().clone() {
-            if self.is_kw_at(1, "in") && Kind::parse(&v).is_none() {
-                let (var, var_span) = self.ident()?;
-                self.bump();
-                return self.quantified_rest(QKind::Pick { n, exactly }, None, var, var_span, s);
-            }
+        if let Tok::Ident(v) = self.tok().clone()
+            && self.is_kw_at(1, "in")
+            && Kind::parse(&v).is_none()
+        {
+            let (var, var_span) = self.ident()?;
+            self.bump();
+            return self.quantified_rest(QKind::Pick { n, exactly }, None, var, var_span, s);
         }
         self.selection(Some(pick))
     }
@@ -1385,11 +1387,10 @@ impl<'a> Parser<'a> {
     fn of_call_from(&mut self, func: OfFunc, fsp: Span, start: Span) -> PResult<Expr> {
         self.bump(); // function word
         self.expect_kw("of")?;
-        let iter_var = match self.tok().clone() {
-            Tok::Ident(v) if self.is_kw_at(1, "in") && !KEYWORDS.contains(&v.as_str()) => Some(v),
-            _ => None,
-        };
-        let operand = if let Some(v) = iter_var {
+        let operand = if let Tok::Ident(v) = self.tok().clone()
+            && self.is_kw_at(1, "in")
+            && !KEYWORDS.contains(&v.as_str())
+        {
             let var_span = self.bump().span;
             self.bump();
             let save = self.inner_of;
@@ -1602,13 +1603,12 @@ impl<'a> Parser<'a> {
                 },
                 _ => None,
             };
-            if depth == 0 {
-                if let Some(r) = rank_here {
-                    if r > rank {
-                        insert_at = t.span.start as usize;
-                        break;
-                    }
-                }
+            if depth == 0
+                && let Some(r) = rank_here
+                && r > rank
+            {
+                insert_at = t.span.start as usize;
+                break;
             }
         }
         let head = self.src[self.stmt_start..insert_at].trim_end();
@@ -1650,13 +1650,13 @@ impl<'a> Parser<'a> {
             self.bump();
             return Ok(Grouping::Chunk(n as u64));
         }
-        if let Tok::Ident(w) = self.tok().clone() {
-            if let Some(u) = TimeUnit::parse(&w) {
-                if !w.ends_with('s') && !matches!(self.tok_at(1), Tok::Dot | Tok::Colon) {
-                    self.bump();
-                    return Ok(Grouping::Time(u));
-                }
-            }
+        if let Tok::Ident(w) = self.tok().clone()
+            && let Some(u) = TimeUnit::parse(&w)
+            && !w.ends_with('s')
+            && !matches!(self.tok_at(1), Tok::Dot | Tok::Colon)
+        {
+            self.bump();
+            return Ok(Grouping::Time(u));
         }
         Ok(Grouping::Expr(Box::new(self.unary()?)))
     }

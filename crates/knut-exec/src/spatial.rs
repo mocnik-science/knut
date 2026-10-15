@@ -87,7 +87,7 @@ impl GeoIndex {
                     seen_any = true;
                     for &i in v {
                         let (val, ig, _) = &self.items[i as usize];
-                        if skip.map_or(false, |k| *k == val.key()) {
+                        if skip.is_some_and(|k| *k == val.key()) {
                             continue;
                         }
                         let d = geom::distance_m(g, ig);
@@ -114,11 +114,11 @@ impl GeoIndex {
         if best.is_none() && !self.items.is_empty() {
             // far away: brute force
             for (i, (val, ig, _)) in self.items.iter().enumerate() {
-                if skip.map_or(false, |k| *k == val.key()) {
+                if skip.is_some_and(|k| *k == val.key()) {
                     continue;
                 }
                 let d = geom::distance_m(g, ig);
-                if best.map_or(true, |b| d < b.1) {
+                if best.is_none_or(|b| d < b.1) {
                     best = Some((i, d));
                 }
             }
@@ -456,14 +456,14 @@ fn net_nearest_uncached(ctx: &Ctx, set: &Arc<SetV>, m: Mode, metric: Metric, net
     let items = set.items(ctx, Hints { geom: true, hist: false })?;
     let mut sources = Vec::new();
     for (i, it) in items.iter().enumerate() {
-        if let Some(p) = ctx.rep_point(it) {
-            if let Some((n, d)) = net.snap(p, m) {
-                let c = match metric {
-                    Metric::Time => d / speed(m),
-                    Metric::Length => d,
-                };
-                sources.push((n, c, i as u32));
-            }
+        if let Some(p) = ctx.rep_point(it)
+            && let Some((n, d)) = net.snap(p, m)
+        {
+            let c = match metric {
+                Metric::Time => d / speed(m),
+                Metric::Length => d,
+            };
+            sources.push((n, c, i as u32));
         }
     }
     let (d, l, _) = net.search(&sources, m, metric, f64::INFINITY);

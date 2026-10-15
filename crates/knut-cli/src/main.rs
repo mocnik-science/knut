@@ -348,11 +348,11 @@ fn main() -> ExitCode {
 }
 
 fn run_script(a: RunArgs) -> i32 {
-    if let Some(t) = a.threads {
-        if let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(t).build_global() {
-            eprintln!("error: {e}");
-            return knut_exec::EXIT_USAGE;
-        }
+    if let Some(t) = a.threads
+        && let Err(e) = rayon::ThreadPoolBuilder::new().num_threads(t).build_global()
+    {
+        eprintln!("error: {e}");
+        return knut_exec::EXIT_USAGE;
     }
     let format = match a.format.as_str() {
         "text" => knut_exec::Format::Text,
@@ -364,11 +364,11 @@ fn run_script(a: RunArgs) -> i32 {
             return knut_exec::EXIT_USAGE;
         }
     };
-    if let Some(d) = &a.out {
-        if let Err(e) = std::fs::create_dir_all(d) {
-            eprintln!("error: {}: {e}", d.display());
-            return knut_exec::EXIT_USAGE;
-        }
+    if let Some(d) = &a.out
+        && let Err(e) = std::fs::create_dir_all(d)
+    {
+        eprintln!("error: {}: {e}", d.display());
+        return knut_exec::EXIT_USAGE;
     }
     let opts = knut_exec::Options {
         db: a.db,
@@ -635,7 +635,7 @@ fn verify(file: &PathBuf, deep: bool, against: Option<PathBuf>, exact: usize) ->
         if exact > 0 {
             for e in b {
                 let t = e.obj_type() as usize;
-                let selected = xxhash_rust::xxh3::xxh3_64(&e.id().to_le_bytes()) % 97 == 0;
+                let selected = xxhash_rust::xxh3::xxh3_64(&e.id().to_le_bytes()).is_multiple_of(97);
                 if !selected {
                     continue;
                 }

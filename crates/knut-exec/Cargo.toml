@@ -3,7 +3,6 @@ name = "knut-exec"
 description = "knut language: executor for .knut scripts on .knutdb databases"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
@@ -20,11 +19,11 @@ zstd.workspace = true
 xxhash-rust.workspace = true
 arrow-array.workspace = true
 arrow-schema.workspace = true
-parquet = { version = "45", default-features = false, features = ["arrow", "zstd"] }
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
 geographiclib-rs = "0.2"
 csv = "1"
-quick-xml = "0.28.2"
-bzip2 = "0.4.4"
+quick-xml = "0.42"
+bzip2 = "0.6"
 
 [dev-dependencies]
 knut-builder.workspace = true

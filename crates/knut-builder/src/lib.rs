@@ -1,4 +1,4 @@
-//! knut builder: converts OSM history PBF (`*.osh.pbf`) into `.knut` files.
+//! knut builder: converts OSM history PBF (`*.osh.pbf`) into `.knutdb` files.
 //!
 //! Pipeline (SPEC.md §1, spec task §11):
 //! 1. ways + relations → node classification (private / shared)
@@ -286,7 +286,7 @@ pub fn default_mem_budget() -> usize {
     // SAFETY: sysctlbyname with a correctly sized out buffer.
     unsafe {
         let mut len = std::mem::size_of::<u64>();
-        libc::sysctlbyname(b"hw.memsize\0".as_ptr().cast(), (&mut mem as *mut u64).cast(), &mut len, std::ptr::null_mut(), 0);
+        libc::sysctlbyname(c"hw.memsize".as_ptr(), (&mut mem as *mut u64).cast(), &mut len, std::ptr::null_mut(), 0);
     }
     #[cfg(target_os = "linux")]
     // SAFETY: sysconf has no preconditions.
@@ -393,11 +393,10 @@ impl<T> Grouper<T> {
                 } else if version(&it) < version(last) {
                     return Err(err(format!("versions of object {iid} not sorted")));
                 }
-            } else if let Some(l) = self.last_id {
-                if iid < l {
+            } else if let Some(l) = self.last_id
+                && iid < l {
                     return Err(err(format!("input not sorted by id ({iid} after {l})")));
                 }
-            }
             cur.push(it);
         }
         if let Some(l) = out.last().and_then(|g: &Vec<T>| g.last()) {
@@ -617,7 +616,7 @@ pub fn build(src: &dyn Source, out: &Path, opt: &BuildOptions, log_raw: &(dyn Fn
             .zip(&cls)
             .map(|(g, cl)| {
                 let tagged = g.iter().any(|v| !v.tags.is_empty());
-                let private = cl.map_or(false, |w| w >= 0) && !tagged;
+                let private = cl.is_some_and(|w| w >= 0) && !tagged;
                 let (recs, nseg) = if private {
                     (Vec::new(), 0)
                 } else {

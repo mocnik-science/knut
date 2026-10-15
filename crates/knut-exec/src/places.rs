@@ -63,19 +63,19 @@ fn lookup(ctx: &Ctx, name: &str, span: Span) -> R<Value> {
         }
         let mut best: Option<u8> = None;
         for (k, p) in NAME_KEYS {
-            if let Some(v) = e.tag(k) {
-                if v.to_lowercase() == lname {
-                    best = Some(best.map_or(*p, |b| b.min(*p)));
-                }
+            if let Some(v) = e.tag(k)
+                && v.to_lowercase() == lname
+            {
+                best = Some(best.map_or(*p, |b| b.min(*p)));
             }
         }
-        if let Some(n) = e.tag("name") {
-            if admin_level(&e) <= 8 {
-                lock(&all_names).push(n.to_string());
-            }
+        if let Some(n) = e.tag("name")
+            && admin_level(&e) <= 8
+        {
+            lock(&all_names).push(n.to_string());
         }
         if let Some(p) = best {
-            let admin = e.tag("boundary").map_or(false, |b| b.as_ref() == "administrative");
+            let admin = e.tag("boundary").is_some_and(|b| b.as_ref() == "administrative");
             acc.push(Cand { level: admin_level(&e), elem: e, prio: p, admin });
         }
         Ok(())

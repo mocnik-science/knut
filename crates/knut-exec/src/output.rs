@@ -102,7 +102,7 @@ pub fn table(ctx: &Ctx, v: &Value) -> R<Table> {
                 Table { cols, rows }
             } else if items.iter().all(|x| matches!(x, Value::Group(_))) && !items.is_empty() {
                 // `groups g in … with …`
-                let nk = items.iter().map(|x| match x { Value::Group(g) => match &g.key { Value::List(k) => k.len(), _ => 1 }, _ => 1 }).max().unwrap_or(1);
+                let nk = items.iter().map(|x| if let Value::Group(g) = x && let Value::List(k) = &g.key { k.len() } else { 1 }).max().unwrap_or(1);
                 let mut cols: Vec<String> = if nk == 1 { vec!["key".into()] } else { (1..=nk).map(|i| format!("key{i}")).collect() };
                 cols.push("value".into());
                 let rows = items
@@ -138,7 +138,7 @@ fn list_width(items: &[Value]) -> Option<usize> {
     let mut n = None;
     for x in items {
         let Value::List(l) = x else { return None };
-        if n.map_or(false, |n| n != l.len()) || !(2..=32).contains(&l.len()) {
+        if n.is_some_and(|n| n != l.len()) || !(2..=32).contains(&l.len()) {
             return None;
         }
         n = Some(l.len());
@@ -196,7 +196,7 @@ pub fn text(ctx: &Ctx, v: &Value, limit: usize) -> R<String> {
             let plain: Vec<bool> = t.cols.iter().map(|c| c == "id" || c.ends_with(".id") || c.ends_with("version") || c.chars().all(|x| x.is_ascii_digit())).collect();
             // digit grouping for a whole column once one of its integers needs it
             let big = |v: &Value| matches!(v, Value::Num(n) if n.dim.is_none() && n.unit.is_none() && n.v.fract() == 0.0 && n.v.abs() >= 10_000.0);
-            let group: Vec<bool> = (0..t.cols.len()).map(|i| t.rows.iter().take(limit).any(|r| r.get(i).map_or(false, big))).collect();
+            let group: Vec<bool> = (0..t.cols.len()).map(|i| t.rows.iter().take(limit).any(|r| r.get(i).is_some_and(big))).collect();
             let rows: Vec<Vec<String>> = t
                 .rows
                 .iter()
@@ -345,10 +345,10 @@ pub fn json(ctx: &Ctx, v: &Value) -> R<serde_json::Value> {
             }
             // OSM elements decoded without geometry load it now
             let g = if e.otype.is_some() { Some(ctx.elem_geom(e)) } else { e.geom.get().cloned() };
-            if let Some(g) = g {
-                if !g.is_empty() {
-                    o["geometry"] = J::String(geom::to_wkt(&g));
-                }
+            if let Some(g) = g
+                && !g.is_empty()
+            {
+                o["geometry"] = J::String(geom::to_wkt(&g));
             }
             o
         }

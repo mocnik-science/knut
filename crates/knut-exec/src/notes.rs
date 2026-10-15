@@ -31,7 +31,7 @@ pub struct NotesIndex {
 fn open(path: &Path) -> Result<Box<dyn BufRead>, String> {
     let f = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let r = std::io::BufReader::with_capacity(1 << 20, f);
-    if path.extension().map_or(false, |e| e == "bz2") {
+    if path.extension().is_some_and(|e| e == "bz2") {
         Ok(Box::new(std::io::BufReader::new(bzip2::read::MultiBzDecoder::new(r))))
     } else {
         Ok(Box::new(r))
@@ -43,7 +43,7 @@ fn ts(s: &str) -> Option<i64> {
 }
 
 fn attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<String> {
-    e.attributes().flatten().find(|a| a.key.as_ref() == name.as_bytes()).and_then(|a| a.unescape_value().ok()).map(|v| v.into_owned())
+    e.attributes().flatten().find(|a| a.key.as_ref() == name).map(|a| a.value.to_string())
 }
 
 /// Parses a notes dump.
@@ -57,7 +57,7 @@ fn read_notes(path: &Path) -> Result<Vec<RawNote>, String> {
     loop {
         match xr.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.name().as_ref() {
-                b"note" => {
+                "note" => {
                     cur = Some(RawNote {
                         id: attr(&e, "id").and_then(|v| v.parse().ok()).unwrap_or(0),
                         lon: attr(&e, "lon").and_then(|v| v.parse().ok()).unwrap_or(0.0),
@@ -68,19 +68,28 @@ fn read_notes(path: &Path) -> Result<Vec<RawNote>, String> {
                         comments: 0,
                     });
                 }
-                b"comment" => {
+                "comment" => {
                     in_comment = true;
                     text.clear();
                 }
                 _ => {}
             },
             Ok(Event::Text(t)) if in_comment => {
-                if let Ok(t) = t.unescape() {
-                    text.push_str(&t);
-                }
+                text.push_str(t.as_ref());
+            }
+            Ok(Event::GeneralRef(r)) if in_comment => {
+                let s = r.as_ref().to_string();
+                text.push_str(match s.as_str() {
+                    "amp" => "&",
+                    "lt" => "<",
+                    "gt" => ">",
+                    "quot" => "\"",
+                    "apos" => "'",
+                    _ => "",
+                });
             }
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"comment" => {
+                "comment" => {
                     in_comment = false;
                     if let Some(n) = &mut cur {
                         if n.comments == 0 {
@@ -89,7 +98,7 @@ fn read_notes(path: &Path) -> Result<Vec<RawNote>, String> {
                         n.comments += 1;
                     }
                 }
-                b"note" => {
+                "note" => {
                     if let Some(n) = cur.take() {
                         out.push(n);
                     }
@@ -113,27 +122,27 @@ pub fn read_changeset_dump(path: &Path, f: &mut dyn FnMut(u64, Vec<(String, Stri
     loop {
         match xr.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
-                if e.name().as_ref() == b"changeset" {
+                if e.name().as_ref() == "changeset" {
                     cur = Some((attr(&e, "id").and_then(|v| v.parse().ok()).unwrap_or(0), Vec::new()));
                 }
             }
             Ok(Event::Empty(e)) => match e.name().as_ref() {
-                b"tag" => {
+                "tag" => {
                     if let (Some(c), Some(k), Some(v)) = (&mut cur, attr(&e, "k"), attr(&e, "v")) {
                         c.1.push((k, v));
                     }
                 }
-                b"changeset" => {
+                "changeset" => {
                     let id = attr(&e, "id").and_then(|v| v.parse().ok()).unwrap_or(0);
                     f(id, Vec::new());
                 }
                 _ => {}
             },
             Ok(Event::End(e)) => {
-                if e.name().as_ref() == b"changeset" {
-                    if let Some((id, tags)) = cur.take() {
-                        f(id, tags);
-                    }
+                if e.name().as_ref() == "changeset"
+                    && let Some((id, tags)) = cur.take()
+                {
+                    f(id, tags);
                 }
             }
             Ok(Event::Eof) => break,

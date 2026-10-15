@@ -3,14 +3,15 @@
 *knut* is short for *knutpunkt*, the Swedish word for 'junction' or 'node', which is the
 building blocks of OpenStreetMap data.
 
-Query results can be converted with ``to_pylist()`` (list of dicts) or ``to_arrow()``
-(``pyarrow.Table``, requires pyarrow).
+Query results implement the Arrow PyCapsule stream interface (``__arrow_c_stream__``),
+so they can be passed directly to ``pyarrow.table()``, ``polars.from_arrow()`` /
+``polars.DataFrame()``, ``duckdb`` or ``pandas`` (via pyarrow) without copying.
 
 Example::
 
-    import knut
+    import knut, pyarrow as pa
     db = knut.open("bremen.knutdb")
-    t = db.snapshot((8.80, 53.07, 8.82, 53.08), "2023-01-01", key="highway").to_arrow()
+    t = pa.table(db.snapshot((8.80, 53.07, 8.82, 53.08), "2024-01-01", key="highway"))
 
 Scripts in the knut language run with :func:`run`::
 

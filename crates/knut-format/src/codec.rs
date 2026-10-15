@@ -34,7 +34,7 @@ pub fn put_varint(out: &mut Vec<u8>, mut v: u64) {
 #[inline]
 pub fn varint_len(v: u64) -> usize {
     let bits = 64 - (v | 1).leading_zeros() as usize;
-    (bits + 6) / 7
+    bits.div_ceil(7)
 }
 
 #[inline]
@@ -113,7 +113,7 @@ pub fn bitpack(vals: impl IntoIterator<Item = u64>, width: u32, out: &mut Vec<u8
 /// Bytes occupied by `n` values of `width` bits.
 #[inline]
 pub fn bitpacked_len(n: usize, width: u32) -> usize {
-    (n * width as usize + 7) / 8
+    (n * width as usize).div_ceil(8)
 }
 
 /// Unpacks `n` values of `width` bits from the start of `buf`, calling `f` for each.

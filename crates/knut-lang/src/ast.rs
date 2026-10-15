@@ -436,10 +436,10 @@ impl Expr {
     pub fn children(&self) -> Vec<&Expr> {
         let mut v: Vec<&Expr> = Vec::new();
         fn mode<'a>(v: &mut Vec<&'a Expr>, m: &'a Option<ModeClause>) {
-            if let Some(m) = m {
-                if let Some(u) = &m.using {
-                    v.push(u);
-                }
+            if let Some(m) = m
+                && let Some(u) = &m.using
+            {
+                v.push(u);
             }
         }
         fn thr<'a>(v: &mut Vec<&'a Expr>, t: &'a Option<Threshold>) {

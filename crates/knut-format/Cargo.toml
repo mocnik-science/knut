@@ -3,7 +3,6 @@ name = "knut-format"
 description = "knut file format: structures, codecs and block encoding (no I/O)"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

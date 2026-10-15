@@ -227,10 +227,10 @@ pub fn index(ctx: &Ctx) -> R<Arc<CsIndex>> {
         .get_or_init(|| {
             let db = ctx.db()?;
             let path = sidecar(&db.path, "changesets");
-            if let Some(f) = read(&path) {
-                if f.stamp == stamp(db) {
-                    return Ok(Arc::new(to_index(f.recs, db)));
-                }
+            if let Some(f) = read(&path)
+                && f.stamp == stamp(db)
+            {
+                return Ok(Arc::new(to_index(f.recs, db)));
             }
             lock(&ctx.caches.notices).push(format!("Building the changeset index {} (once)…", path.display()));
             let recs = build(db).map_err(|e| RtErr::internal(Span::default(), e))?;
@@ -284,10 +284,10 @@ pub fn user_value(u: &Arc<UserRec>) -> Value {
 }
 
 pub fn user_elem(ctx: &Ctx, uid: u32) -> Value {
-    if let Some(Ok(ix)) = ctx.caches.cs.get() {
-        if let Some(u) = ix.user(uid) {
-            return user_value(u);
-        }
+    if let Some(Ok(ix)) = ctx.caches.cs.get()
+        && let Some(u) = ix.user(uid)
+    {
+        return user_value(u);
     }
     let name = ctx.db_arc().and_then(|d| if d.users { d.user_name(uid) } else { None });
     user_value(&Arc::new(UserRec { uid, name, changesets: Vec::new(), edits: 0 }))
@@ -297,10 +297,10 @@ pub fn changeset_elem(ctx: &Ctx, id: u64, uid: u32, ts: i64) -> Value {
     if id == 0 {
         return Value::None;
     }
-    if let Some(Ok(ix)) = ctx.caches.cs.get() {
-        if let Some(r) = ix.get(id) {
-            return cs_value(r);
-        }
+    if let Some(Ok(ix)) = ctx.caches.cs.get()
+        && let Some(r) = ix.get(id)
+    {
+        return cs_value(r);
     }
     // minimal record; fields that need the index load it on demand
     cs_value(&Arc::new(CsRec { id, uid, t0: ts, t1: ts, edits: 0, bbox: BBoxF::EMPTY, comment: None, tags: Arc::from(Vec::new()) }))

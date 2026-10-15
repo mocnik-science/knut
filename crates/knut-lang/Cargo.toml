@@ -3,7 +3,6 @@ name = "knut-lang"
 description = "knut language: lexer, parser, diagnostics"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

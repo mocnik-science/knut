@@ -13,7 +13,7 @@ pub struct BlockCache {
 
 impl BlockCache {
     pub fn new(capacity: usize) -> Self {
-        let per = NonZeroUsize::new(((capacity + SHARDS - 1) / SHARDS).max(1)).unwrap();
+        let per = NonZeroUsize::new(capacity.div_ceil(SHARDS).max(1)).unwrap();
         BlockCache { shards: (0..SHARDS).map(|_| Mutex::new(LruCache::new(per))).collect() }
     }
 

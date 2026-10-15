@@ -150,10 +150,10 @@ impl SetV {
             SetSrc::Query(q) => fold_query(ctx, q, hints, init, step),
             SetSrc::Filter { base, vars, preds, scope, extra } => {
                 let wrapped = |acc: &mut A, v: Value| -> R<()> {
-                    if let Some(f) = extra {
-                        if !f(ctx, &v)? {
-                            return Ok(());
-                        }
+                    if let Some(f) = extra
+                        && !f(ctx, &v)?
+                    {
+                        return Ok(());
                     }
                     let sc = ctx.bind_elem(scope, vars, &v);
                     for p in preds {

@@ -142,7 +142,7 @@ impl<T: Rec> ExtSorter<T> {
     fn spill(&mut self) -> Result<()> {
         self.sort_buf();
         // several runs written in parallel (each sorted; the merge handles any number)
-        let parts: Vec<&[T]> = self.buf.chunks(((self.buf.len() + 7) / 8).max(1)).collect();
+        let parts: Vec<&[T]> = self.buf.chunks(self.buf.len().div_ceil(8).max(1)).collect();
         let paths: Vec<PathBuf> = parts.iter().map(|_| tmp_path(&self.dir, self.tag)).collect();
         parts.par_iter().zip(&paths).try_for_each(|(p, path)| write_run(path, p))?;
         for p in &paths {

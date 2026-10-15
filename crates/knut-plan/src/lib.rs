@@ -242,12 +242,11 @@ pub fn check(script: Script, src: &str, mut diags: Vec<Diagnostic>, caps: Option
                     }
                 };
                 let mut clashes: Vec<(String, String, Span)> = Vec::new();
-                if let Some(k) = name.rfind('_') {
-                    if let Some(g) = c.globals.get(&name[..k]) {
-                        if positions(&g.ty).iter().any(|p| *p == name[k + 1..]) {
-                            clashes.push((name.clone(), name[..k].to_string(), *name_span));
-                        }
-                    }
+                if let Some(k) = name.rfind('_')
+                    && let Some(g) = c.globals.get(&name[..k])
+                    && positions(&g.ty).iter().any(|p| *p == name[k + 1..])
+                {
+                    clashes.push((name.clone(), name[..k].to_string(), *name_span));
                 }
                 for p in positions(&ty) {
                     let proj = format!("{name}_{p}");
@@ -464,25 +463,25 @@ impl<'a> Checker<'a> {
             return (Some(IdentRes::Setting(name.into())), t);
         }
         // projection `war_B`
-        if let Some(i) = name.rfind('_') {
-            if i > 0 && i + 1 < name.len() {
-                let (base, p) = (&name[..i], &name[i + 1..]);
-                let tuple = self.lookup_local(base).or_else(|| self.globals.get(base).map(|g| g.ty.clone()));
-                if let Some(Ty::Set(t)) = &tuple {
-                    if let Ty::Tuple(items) = &**t {
-                        if let Some(k) = items.iter().position(|(v, _)| v == p) {
-                            let kind = items[k].1;
-                            return (Some(IdentRes::Projection { var: base.into(), pos: k }), Ty::Set(Box::new(Ty::Elem(Some(kind)))));
-                        }
-                    }
-                }
-                // one match of a sequence: `x_B` is a single element
-                if let Some(Ty::Tuple(items)) = &tuple {
-                    if let Some(k) = items.iter().position(|(v, _)| v == p) {
-                        let kind = items[k].1;
-                        return (Some(IdentRes::Projection { var: base.into(), pos: k }), Ty::Elem(Some(kind)));
-                    }
-                }
+        if let Some(i) = name.rfind('_')
+            && i > 0
+            && i + 1 < name.len()
+        {
+            let (base, p) = (&name[..i], &name[i + 1..]);
+            let tuple = self.lookup_local(base).or_else(|| self.globals.get(base).map(|g| g.ty.clone()));
+            if let Some(Ty::Set(t)) = &tuple
+                && let Ty::Tuple(items) = &**t
+                && let Some(k) = items.iter().position(|(v, _)| v == p)
+            {
+                let kind = items[k].1;
+                return (Some(IdentRes::Projection { var: base.into(), pos: k }), Ty::Set(Box::new(Ty::Elem(Some(kind)))));
+            }
+            // one match of a sequence: `x_B` is a single element
+            if let Some(Ty::Tuple(items)) = &tuple
+                && let Some(k) = items.iter().position(|(v, _)| v == p)
+            {
+                let kind = items[k].1;
+                return (Some(IdentRes::Projection { var: base.into(), pos: k }), Ty::Elem(Some(kind)));
             }
         }
         match pos {
@@ -500,37 +499,38 @@ impl<'a> Checker<'a> {
             self.needs_db = true;
             self.kind_caps(kind, span);
             // `count of nodes`: every element of the whole database (W003)
-            if kind.is_osm() {
-                if let Some(caps) = self.caps {
-                    if caps.extent_km2 > 10_000.0 {
-                        let a = caps.extent_km2;
-                        self.diags.push(
-                            Diagnostic::warning(
-                                "W003",
-                                span,
-                                Text2::new(
-                                    format!("This selects all {} of a very large region without a filter.", kind.plural()),
-                                    format!("Das wählt alle {} einer sehr großen Region ohne Filter aus.", kind.plural()),
-                                ),
-                            )
-                            .why(
-                                format!("The region covers about {} km², so this can take long.", fmt_int(a)),
-                                format!("Die Region umfasst etwa {} km², das kann lange dauern.", fmt_int(a)),
-                            )
-                            .header(Header::YouCan)
-                            .sugg_label("add a condition:", "eine Bedingung ergänzen:", format!("{name} x with …"))
-                            .sugg_label("run anyway:", "trotzdem ausführen:", "ignore_warnings = true"),
-                        );
-                    }
-                }
+            if kind.is_osm()
+                && let Some(caps) = self.caps
+                && caps.extent_km2 > 10_000.0
+            {
+                let a = caps.extent_km2;
+                self.diags.push(
+                    Diagnostic::warning(
+                        "W003",
+                        span,
+                        Text2::new(
+                            format!("This selects all {} of a very large region without a filter.", kind.plural()),
+                            format!("Das wählt alle {} einer sehr großen Region ohne Filter aus.", kind.plural()),
+                        ),
+                    )
+                    .why(
+                        format!("The region covers about {} km², so this can take long.", fmt_int(a)),
+                        format!("Die Region umfasst etwa {} km², das kann lange dauern.", fmt_int(a)),
+                    )
+                    .header(Header::YouCan)
+                    .sugg_label("add a condition:", "eine Bedingung ergänzen:", format!("{name} x with …"))
+                    .sugg_label("run anyway:", "trotzdem ausführen:", "ignore_warnings = true"),
+                );
             }
             return (Some(IdentRes::AllOfKind(kind)), Ty::Set(Box::new(Ty::Elem(Some(kind)))));
         }
         // undefined
         let code = if pos == Pos::Net { "E202" } else { "E201" };
         let mut d = Diagnostic::error(code, span, Text2::new(format!("\"{name}\" is not defined."), format!("\"{name}\" ist nicht definiert.")));
-        if let Some(sp) = self.later.get(name).map(|(_, sp)| *sp).filter(|sp| sp.start > span.start) {
-            let l = self.line(sp);
+        if let Some((_, sp)) = self.later.get(name)
+            && sp.start > span.start
+        {
+            let l = self.line(*sp);
             d = d.why(
                 format!("It is defined later, on line {l}. Names must be defined before they are used."),
                 format!("Es wird erst später definiert, in Zeile {l}. Namen müssen vor ihrer Verwendung definiert sein."),
@@ -781,10 +781,10 @@ impl<'a> Checker<'a> {
         }
         if f == "user" || f == "creator" {
             self.needs_db = true;
-            if let Some(c) = self.caps {
-                if !c.users {
-                    self.e207(fs);
-                }
+            if let Some(c) = self.caps
+                && !c.users
+            {
+                self.e207(fs);
             }
         }
         match &bt {
@@ -975,7 +975,7 @@ impl<'a> Checker<'a> {
             RelTail::In(r) => {
                 let l_tag = Self::is_tag_operand(l).is_some();
                 self.infer(l);
-                if let (true, ExprKind::List(xs)) = (l_tag, &r.kind) {
+                if l_tag && let ExprKind::List(xs) = &r.kind {
                     for x in xs {
                         self.infer_pos(x, Pos::Value);
                     }
@@ -1028,14 +1028,14 @@ impl<'a> Checker<'a> {
             RelTail::Before(r) | RelTail::After(r) => {
                 let d = self.infer(l);
                 self.infer(r);
-                if let Ty::Num(x) = d {
-                    if x != Dim::TIME {
-                        self.diags.push(Diagnostic::error(
-                            "E303",
-                            l.span,
-                            Text2::new("\"before\" and \"after\" need a duration, such as 30 days.", "\"before\" und \"after\" brauchen eine Dauer, etwa 30 days."),
-                        ));
-                    }
+                if let Ty::Num(x) = d
+                    && x != Dim::TIME
+                {
+                    self.diags.push(Diagnostic::error(
+                        "E303",
+                        l.span,
+                        Text2::new("\"before\" and \"after\" need a duration, such as 30 days.", "\"before\" und \"after\" brauchen eine Dauer, etwa 30 days."),
+                    ));
                 }
                 Ty::Time
             }
@@ -1073,26 +1073,26 @@ impl<'a> Checker<'a> {
             return;
         }
         // E305: unit after the tag has the wrong measure
-        if let ExprKind::Unit(inner, u, us) = &l.kind {
-            if matches!(inner.kind, ExprKind::Tag(..)) {
-                let want = match &r.kind {
-                    ExprKind::Unit(_, ru, _) => ru.name,
-                    _ => units::display_unit(dr).map_or("m", |u| u.name),
-                };
-                self.diags.push(
-                    Diagnostic::error(
-                        "E305",
-                        *us,
-                        Text2::new(
-                            format!("\"{}\" is {}, but {} is expected here.", u.name, dl.a_name(), dr.a_name()),
-                            format!("\"{}\" ist eine {}, hier wird aber eine {} erwartet.", u.name, dl.name(true), dr.name(true)),
-                        ),
-                    )
-                    .header(Header::DidYouMean)
-                    .sugg(format!("{} {want} {} {}", self.text(inner.span), op.symbol(), self.text(r.span))),
-                );
-                return;
-            }
+        if let ExprKind::Unit(inner, u, us) = &l.kind
+            && matches!(inner.kind, ExprKind::Tag(..))
+        {
+            let want = match &r.kind {
+                ExprKind::Unit(_, ru, _) => ru.name,
+                _ => units::display_unit(dr).map_or("m", |u| u.name),
+            };
+            self.diags.push(
+                Diagnostic::error(
+                    "E305",
+                    *us,
+                    Text2::new(
+                        format!("\"{}\" is {}, but {} is expected here.", u.name, dl.a_name(), dr.a_name()),
+                        format!("\"{}\" ist eine {}, hier wird aber eine {} erwartet.", u.name, dl.name(true), dr.name(true)),
+                    ),
+                )
+                .header(Header::DidYouMean)
+                .sugg(format!("{} {want} {} {}", self.text(inner.span), op.symbol(), self.text(r.span))),
+            );
+            return;
         }
         self.diags.push(
             Diagnostic::error("E303", whole.span, Text2::new("This unit does not fit here.", "Diese Einheit passt hier nicht."))
@@ -1105,10 +1105,10 @@ impl<'a> Checker<'a> {
 
     fn threshold(&mut self, th: &Threshold, what: &str) {
         let t = self.infer(&th.value);
-        if let Some(m) = &th.mode {
-            if let Some(u) = &m.using {
-                self.infer_pos(u, Pos::Net);
-            }
+        if let Some(m) = &th.mode
+            && let Some(u) = &m.using
+        {
+            self.infer_pos(u, Pos::Net);
         }
         let Some(d) = t.dim() else { return };
         let vt = self.text(th.value.span).to_string();
@@ -1137,9 +1137,12 @@ impl<'a> Checker<'a> {
             _ => d == Dim::LENGTH || (d == Dim::TIME && has_mode),
         };
         if ok {
-            let calendar_near =
-                what == "near" && d == Dim::TIME && matches!(&th.value.kind, ExprKind::Unit(_, u, _) if u.factor >= 86_400.0);
-            if !calendar_near {
+            if what == "near"
+                && d == Dim::TIME
+                && let ExprKind::Unit(_, u, _) = &th.value.kind
+                && u.factor >= 86_400.0
+            {
+            } else {
                 return;
             }
         }
@@ -1230,35 +1233,41 @@ impl<'a> Checker<'a> {
             _ => {}
         }
         // W003
-        if let Some(caps) = self.caps {
-            if s.source.is_none() && s.cond.is_none() && s.var_pred.is_none() && s.pick.is_none() && s.pattern.len() == 1 && s.pattern[0].kind.is_osm() && caps.extent_km2 > 10_000.0 {
-                let region_km2 = match s.within.as_deref().map(|w| &w.kind) {
-                    None => Some(caps.extent_km2),
-                    Some(ExprKind::BoxLit(b)) => Some(box_km2(b)),
-                    _ => None,
-                };
-                if let Some(a) = region_km2 {
-                    if a > 10_000.0 {
-                        let k = s.pattern[0].kind;
-                        self.diags.push(
-                            Diagnostic::warning(
-                                "W003",
-                                e.span,
-                                Text2::new(
-                                    format!("This selects all {} of a very large region without a filter.", k.plural()),
-                                    format!("Das wählt alle {} einer sehr großen Region ohne Filter aus.", k.plural()),
-                                ),
-                            )
-                            .why(
-                                format!("The region covers about {} km², so this can take long.", fmt_int(a)),
-                                format!("Die Region umfasst etwa {} km², das kann lange dauern.", fmt_int(a)),
-                            )
-                            .header(Header::YouCan)
-                            .sugg_label("add a condition:", "eine Bedingung ergänzen:", format!("{} with …", self.text(e.span)))
-                            .sugg_label("run anyway:", "trotzdem ausführen:", "ignore_warnings = true"),
-                        );
-                    }
-                }
+        if let Some(caps) = self.caps
+            && s.source.is_none()
+            && s.cond.is_none()
+            && s.var_pred.is_none()
+            && s.pick.is_none()
+            && s.pattern.len() == 1
+            && s.pattern[0].kind.is_osm()
+            && caps.extent_km2 > 10_000.0
+        {
+            let region_km2 = match s.within.as_deref().map(|w| &w.kind) {
+                None => Some(caps.extent_km2),
+                Some(ExprKind::BoxLit(b)) => Some(box_km2(b)),
+                _ => None,
+            };
+            if let Some(a) = region_km2
+                && a > 10_000.0
+            {
+                let k = s.pattern[0].kind;
+                self.diags.push(
+                    Diagnostic::warning(
+                        "W003",
+                        e.span,
+                        Text2::new(
+                            format!("This selects all {} of a very large region without a filter.", k.plural()),
+                            format!("Das wählt alle {} einer sehr großen Region ohne Filter aus.", k.plural()),
+                        ),
+                    )
+                    .why(
+                        format!("The region covers about {} km², so this can take long.", fmt_int(a)),
+                        format!("Die Region umfasst etwa {} km², das kann lange dauern.", fmt_int(a)),
+                    )
+                    .header(Header::YouCan)
+                    .sugg_label("add a condition:", "eine Bedingung ergänzen:", format!("{} with …", self.text(e.span)))
+                    .sugg_label("run anyway:", "trotzdem ausführen:", "ignore_warnings = true"),
+                );
             }
         }
         let elem = if s.pattern.len() > 1 {
@@ -1304,37 +1313,37 @@ impl<'a> Checker<'a> {
             }
         };
         // E601
-        if func.is_aggregate() && !matches!(func, OfFunc::Days | OfFunc::Weeks | OfFunc::Months | OfFunc::Years) {
-            if let OfOperand::Expr(x) = operand {
-                if matches!(set_ty, Ty::Elem(_)) {
-                    let mut d = Diagnostic::error(
-                        "E601",
-                        x.span,
-                        Text2::new(
-                            format!("\"{} of\" expects a set, but got a single element.", func.name()),
-                            format!("\"{} of\" erwartet eine Menge, hat aber ein einzelnes Element bekommen.", func.name()),
-                        ),
-                    );
-                    if let ExprKind::Select(s) = &x.kind {
-                        if let Some(p) = &s.pick {
-                            let fname = func.name();
-                            let k = &s.pattern[0];
-                            let after_kind = &self.src[k.kind_span.end as usize..x.span.end as usize];
-                            let head = &self.src[p.span.start as usize..k.kind_span.start as usize];
-                            let plural = k.kind.plural();
-                            let open = if self.src[..x.span.start as usize].ends_with('(') { "(" } else { "" };
-                            let close = if open.is_empty() { "" } else { ")" };
-                            let rest = after_kind.trim_end_matches(')');
-                            d = d
-                                .header(Header::DidYouMean)
-                                .sugg_note(format!("{fname} of ({head}{plural}{rest})"), "a list with one element", "eine Liste mit einem Element")
-                                .sugg_note(format!("{fname} of ({plural}{rest})"), "all of them", "alle");
-                            let _ = (open, close);
-                        }
-                    }
-                    self.diags.push(d);
-                }
+        if func.is_aggregate()
+            && !matches!(func, OfFunc::Days | OfFunc::Weeks | OfFunc::Months | OfFunc::Years)
+            && let OfOperand::Expr(x) = operand
+            && matches!(set_ty, Ty::Elem(_))
+        {
+            let mut d = Diagnostic::error(
+                "E601",
+                x.span,
+                Text2::new(
+                    format!("\"{} of\" expects a set, but got a single element.", func.name()),
+                    format!("\"{} of\" erwartet eine Menge, hat aber ein einzelnes Element bekommen.", func.name()),
+                ),
+            );
+            if let ExprKind::Select(s) = &x.kind
+                && let Some(p) = &s.pick
+            {
+                let fname = func.name();
+                let k = &s.pattern[0];
+                let after_kind = &self.src[k.kind_span.end as usize..x.span.end as usize];
+                let head = &self.src[p.span.start as usize..k.kind_span.start as usize];
+                let plural = k.kind.plural();
+                let open = if self.src[..x.span.start as usize].ends_with('(') { "(" } else { "" };
+                let close = if open.is_empty() { "" } else { ")" };
+                let rest = after_kind.trim_end_matches(')');
+                d = d
+                    .header(Header::DidYouMean)
+                    .sugg_note(format!("{fname} of ({head}{plural}{rest})"), "a list with one element", "eine Liste mit einem Element")
+                    .sugg_note(format!("{fname} of ({plural}{rest})"), "all of them", "alle");
+                let _ = (open, close);
             }
+            self.diags.push(d);
         }
         // clauses see the element variables
         let mut scope = vars.clone();
@@ -1351,23 +1360,23 @@ impl<'a> Checker<'a> {
             match g {
                 Grouping::Cell(x) => {
                     let t = self.infer(x);
-                    if let Some(d) = t.dim() {
-                        if d != Dim::LENGTH {
-                            self.diags.push(Diagnostic::error(
-                                "E303",
-                                x.span,
-                                Text2::new("\"per cell of\" needs a length, such as 1 km.", "\"per cell of\" braucht eine Länge, etwa 1 km."),
-                            ));
-                        }
+                    if let Some(d) = t.dim()
+                        && d != Dim::LENGTH
+                    {
+                        self.diags.push(Diagnostic::error(
+                            "E303",
+                            x.span,
+                            Text2::new("\"per cell of\" needs a length, such as 1 km.", "\"per cell of\" braucht eine Länge, etwa 1 km."),
+                        ));
                     }
                 }
                 Grouping::Expr(x) => {
                     if matches!(&x.kind, ExprKind::Ident(n) if n == "user") && self.lookup_local("user").is_none() && !self.globals.contains_key("user") {
                         self.idents.insert(x.span, IdentRes::ImplicitField("user".into()));
-                        if let Some(c) = self.caps {
-                            if !c.users {
-                                self.e207(x.span);
-                            }
+                        if let Some(c) = self.caps
+                            && !c.users
+                        {
+                            self.e207(x.span);
                         }
                     } else {
                         self.infer(x);
@@ -1420,17 +1429,16 @@ impl<'a> Checker<'a> {
             }
             _ => {}
         }
-        if let Some(m) = &cl.mode {
-            if let Some(u) = &m.using {
-                self.infer_pos(u, Pos::Net);
-            }
+        if let Some(m) = &cl.mode
+            && let Some(u) = &m.using
+        {
+            self.infer_pos(u, Pos::Net);
         }
-        if func == OfFunc::User {
-            if let Some(c) = self.caps {
-                if !c.users {
-                    self.e207(fsp);
-                }
-            }
+        if func == OfFunc::User
+            && let Some(c) = self.caps
+            && !c.users
+        {
+            self.e207(fsp);
         }
         let grouped = !cl.per.is_empty() || matches!(cl.time, Some(TimeRef::OnEach { .. })) || matches!(set_ty, Ty::Grouped) && func.is_aggregate();
         if grouped {
@@ -1555,19 +1563,20 @@ impl<'a> Checker<'a> {
         presence(c, self.src, &mut handled);
         let mut sites = Vec::new();
         c.walk(&mut |x| {
-            if let ExprKind::Rel(l, RelTail::Cmp(op, r)) = &x.kind {
-                if matches!(op, CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge | CmpOp::Ne) && !matches!(r.kind, ExprKind::None) {
-                    for side in [&**l, &**r] {
-                        if let Some((base, key)) = Self::is_tag_operand(side) {
-                            let tag_txt = match &side.kind {
-                                ExprKind::Unit(t, _, _) => self.text(t.span).to_string(),
-                                _ => self.text(side.span).to_string(),
-                            };
-                            if handled.contains(&tag_txt) {
-                                continue;
-                            }
-                            sites.push((x.span, tag_txt, key.to_string(), base.span, self.text(x.span).to_string()));
+            if let ExprKind::Rel(l, RelTail::Cmp(op, r)) = &x.kind
+                && matches!(op, CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge | CmpOp::Ne)
+                && !matches!(r.kind, ExprKind::None)
+            {
+                for side in [&**l, &**r] {
+                    if let Some((base, key)) = Self::is_tag_operand(side) {
+                        let tag_txt = match &side.kind {
+                            ExprKind::Unit(t, _, _) => self.text(t.span).to_string(),
+                            _ => self.text(side.span).to_string(),
+                        };
+                        if handled.contains(&tag_txt) {
+                            continue;
                         }
+                        sites.push((x.span, tag_txt, key.to_string(), base.span, self.text(x.span).to_string()));
                     }
                 }
             }
@@ -1615,7 +1624,7 @@ impl<'a> Checker<'a> {
                 )
                 .header(Header::Consider);
                 // lambdas show the arrow, other bindings only the name
-                let lambda = self.src.get(vs.end as usize..).map_or(false, |r| r.trim_start().starts_with("=>"));
+                let lambda = self.src.get(vs.end as usize..).is_some_and(|r| r.trim_start().starts_with("=>"));
                 d = d.sugg(if lambda { format!("{} => …", better_name(&w)) } else { better_name(&w).to_string() });
                 if !vs.is_empty() {
                     d = d.extra(us);
@@ -1633,10 +1642,10 @@ impl<'a> Checker<'a> {
             if let StmtKind::Define { body, .. } = &script.stmts[d.stmt].kind {
                 let mut u = Vec::new();
                 body.walk(&mut |x| {
-                    if let ExprKind::Field(_, f, _) = &x.kind {
-                        if fields.contains(f) {
-                            u.push(f.clone());
-                        }
+                    if let ExprKind::Field(_, f, _) = &x.kind
+                        && fields.contains(f)
+                    {
+                        u.push(f.clone());
                     }
                 });
                 uses.entry(d.field.clone()).or_default().extend(u);

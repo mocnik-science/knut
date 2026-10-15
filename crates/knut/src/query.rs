@@ -115,16 +115,14 @@ impl<'a> Compiled<'a> {
     }
 
     fn bloom_ok(&self, b: &Bloom) -> bool {
-        if let Some(Some(h)) = self.key_hash {
-            if !bloom::test(b, h) {
+        if let Some(Some(h)) = self.key_hash
+            && !bloom::test(b, h) {
                 return false;
             }
-        }
-        if let Some(h) = self.kv_hash {
-            if !bloom::test(b, h) {
+        if let Some(h) = self.kv_hash
+            && !bloom::test(b, h) {
                 return false;
             }
-        }
         true
     }
 
@@ -133,25 +131,22 @@ impl<'a> Compiled<'a> {
     }
 
     fn meta_ok(&self, m: &Meta, tags: &Tags) -> bool {
-        if let Some(u) = self.f.uid {
-            if m.uid != u {
+        if let Some(u) = self.f.uid
+            && m.uid != u {
                 return false;
             }
-        }
-        if let Some(c) = self.f.changeset {
-            if m.changeset != c {
+        if let Some(c) = self.f.changeset
+            && m.changeset != c {
                 return false;
             }
-        }
         if let Some(k) = &self.f.key {
             match tags.iter().find(|(kk, _)| kk.as_ref() == k.as_str()) {
                 None => return false,
                 Some((_, v)) => {
-                    if let Some(want) = &self.f.value {
-                        if v.as_ref() != want.as_str() {
+                    if let Some(want) = &self.f.value
+                        && v.as_ref() != want.as_str() {
                             return false;
                         }
-                    }
                 }
             }
         }
@@ -167,20 +162,20 @@ impl<'a> Compiled<'a> {
         let Some(k) = &self.f.key else { return true };
         match tags.iter().find(|(kk, _)| kk.as_ref() == k.as_str()) {
             None => false,
-            Some((_, v)) => self.f.value.as_ref().map_or(true, |w| v.as_ref() == w.as_str()),
+            Some((_, v)) => self.f.value.as_ref().is_none_or(|w| v.as_ref() == w.as_str()),
         }
     }
 
     fn attr_ok(&self, m: &Meta, tag_ok: bool) -> bool {
-        tag_ok && self.f.uid.map_or(true, |u| m.uid == u) && self.f.changeset.map_or(true, |c| m.changeset == c)
+        tag_ok && self.f.uid.is_none_or(|u| m.uid == u) && self.f.changeset.is_none_or(|c| m.changeset == c)
     }
 
     fn private_ok(&self, e: &PrivEntry) -> bool {
         self.f.include_private_nodes
             && self.f.types[0]
             && !self.has_tag_filter()
-            && self.f.uid.map_or(true, |u| u == e.uid)
-            && self.f.changeset.map_or(true, |c| c == e.changeset)
+            && self.f.uid.is_none_or(|u| u == e.uid)
+            && self.f.changeset.is_none_or(|c| c == e.changeset)
     }
 }
 
@@ -397,13 +392,11 @@ impl Reader {
                 best = Some(v);
             }
         }
-        if let Some(f) = &mut best {
-            if t == ObjType::Way && f.meta.visible {
-                if let Some(g) = self.way_geometry_at(id, ts)? {
+        if let Some(f) = &mut best
+            && t == ObjType::Way && f.meta.visible
+                && let Some(g) = self.way_geometry_at(id, ts)? {
                     f.geometry = Geometry::Line(g.into_iter().map(|(_, p)| p).collect());
                 }
-            }
-        }
         Ok(best)
     }
 
@@ -486,11 +479,10 @@ impl Reader {
                 let Some(mut geom) = geom else { return Ok(None) };
                 let resolved = self.node_positions(&pending, ts)?;
                 for (nid, p) in geom.iter_mut() {
-                    if p.is_none() {
-                        if let Some(Some(q)) = resolved.get(nid) {
+                    if p.is_none()
+                        && let Some(Some(q)) = resolved.get(nid) {
                             *p = Some(*q);
                         }
-                    }
                 }
                 return Ok(Some(geom));
             }
@@ -601,7 +593,7 @@ impl Reader {
                     // objects also contribute non-matching candidates).
                     let tags = |t: &Tags| c.tags_ok(t);
                     let keep = |d: &knut_format::block::DirEntry, v: &[Meta], ok: &[bool]| {
-                        v.iter().zip(ok).rev().find(|(m, _)| m.timestamp <= ts).map_or(false, |(m, ok)| {
+                        v.iter().zip(ok).rev().find(|(m, _)| m.timestamp <= ts).is_some_and(|(m, ok)| {
                             (m.visible && c.attr_ok(m, *ok)) || d.flags & SEG_MULTI != 0
                         })
                     };
@@ -625,7 +617,7 @@ impl Reader {
                     let tags = |t: &Tags| c.tags_ok(t);
                     // keep segments whose version at `ts` is visible and matches
                     let keep = |_: &knut_format::block::DirEntry, v: &[Meta], ok: &[bool]| {
-                        v.iter().zip(ok).rev().find(|(m, _)| m.timestamp <= ts).map_or(false, |(m, ok)| m.visible && c.attr_ok(m, *ok))
+                        v.iter().zip(ok).rev().find(|(m, _)| m.timestamp <= ts).is_some_and(|(m, ok)| m.visible && c.attr_ok(m, *ok))
                     };
                     self.block_filtered(no, &knut_format::block::SegFilter { tags: &tags, keep: &keep })?
                 } else {
@@ -642,24 +634,20 @@ impl Reader {
                         SegmentBody::Node(_) if filter.types[0] => {
                             let Some(vi) = version_at(s, ts) else { continue };
                             let f = version_feature(&b, si, vi)?;
-                            if f.meta.visible && c.meta_ok(&f.meta, &f.tags) {
-                                if let Geometry::Point(x, y) = f.geometry {
-                                    if bbox.contains(x, y) {
+                            if f.meta.visible && c.meta_ok(&f.meta, &f.tags)
+                                && let Geometry::Point(x, y) = f.geometry
+                                    && bbox.contains(x, y) {
                                         p.features.push(f);
                                     }
-                                }
-                            }
                         }
                         SegmentBody::Way { slots, .. } => {
                             if want_private {
                                 for sl in slots {
-                                    if let Some(es) = &sl.private {
-                                        if let Some(e) = entry_at(es, ts) {
-                                            if e.visible && bbox.contains(e.lon, e.lat) && c.private_ok(e) {
+                                    if let Some(es) = &sl.private
+                                        && let Some(e) = entry_at(es, ts)
+                                            && e.visible && bbox.contains(e.lon, e.lat) && c.private_ok(e) {
                                                 p.features.push(priv_feature(sl.node_id, e));
                                             }
-                                        }
-                                    }
                                 }
                             }
                             if !filter.types[1] {
@@ -709,21 +697,19 @@ impl Reader {
         let resolved = self.node_positions(&pending, ts)?;
         let mut out = Vec::with_capacity(features.len());
         for mut f in features {
-            if f.obj_type == ObjType::Way {
-                if let Geometry::Line(g) = &mut f.geometry {
+            if f.obj_type == ObjType::Way
+                && let Geometry::Line(g) = &mut f.geometry {
                     for (k, p) in g.iter_mut().enumerate() {
-                        if p.is_none() {
-                            if let Some(Some(q)) = resolved.get(&f.nodes[k]) {
+                        if p.is_none()
+                            && let Some(Some(q)) = resolved.get(&f.nodes[k]) {
                                 *p = Some(*q);
                             }
-                        }
                     }
                     let coords: Vec<(i32, i32)> = g.iter().flatten().copied().collect();
                     if !line_intersects(&coords, bbox) {
                         continue;
                     }
                 }
-            }
             if !filter.geometry {
                 f.geometry = Geometry::None;
             }
@@ -791,8 +777,8 @@ impl Reader {
                     if !hit(&b.dirs[si]) {
                         continue;
                     }
-                    if let SegmentBody::Way { slots, .. } = &s.body {
-                        if want_private {
+                    if let SegmentBody::Way { slots, .. } = &s.body
+                        && want_private {
                             for sl in slots {
                                 for e in sl.private.as_deref().unwrap_or(&[]) {
                                     if !e.continuation
@@ -806,7 +792,6 @@ impl Reader {
                                 }
                             }
                         }
-                    }
                     if !filter.types[s.obj_type() as usize] {
                         continue;
                     }
@@ -825,10 +810,11 @@ impl Reader {
                             }
                             f.members = rel_members.as_ref().unwrap()[vi].clone();
                         }
-                        if let Geometry::Point(x, y) = f.geometry {
-                            if !inside && !bbox.contains(x, y) {
-                                continue;
-                            }
+                        if let Geometry::Point(x, y) = f.geometry
+                            && !inside
+                            && !bbox.contains(x, y)
+                        {
+                            continue;
                         }
                         if !filter.geometry {
                             f.geometry = Geometry::None;
@@ -873,13 +859,11 @@ impl Reader {
 
 fn private_pos(b: &DecodedBlock, id: i64, ts: i64) -> Option<Option<(i32, i32)>> {
     for &(si, k) in b.private_slots(id) {
-        if let SegmentBody::Way { slots, .. } = &b.segs[si as usize].body {
-            if let Some(es) = &slots[k as usize].private {
-                if let Some(e) = entry_at(es, ts) {
+        if let SegmentBody::Way { slots, .. } = &b.segs[si as usize].body
+            && let Some(es) = &slots[k as usize].private
+                && let Some(e) = entry_at(es, ts) {
                     return Some(e.visible.then_some((e.lon, e.lat)));
                 }
-            }
-        }
     }
     None
 }

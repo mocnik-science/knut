@@ -77,19 +77,19 @@ impl SpillingCounter {
             match &mut cur {
                 Some((cs, cc)) if *cs == s => *cc += c,
                 _ => {
-                    if let Some((cs, cc)) = cur.take() {
-                        if cc >= min {
-                            out.insert(Str::from(cs), cc);
-                        }
+                    if let Some((cs, cc)) = cur.take()
+                        && cc >= min
+                    {
+                        out.insert(Str::from(cs), cc);
                     }
                     cur = Some((s, c));
                 }
             }
         }
-        if let Some((cs, cc)) = cur {
-            if cc >= min {
-                out.insert(Str::from(cs), cc);
-            }
+        if let Some((cs, cc)) = cur
+            && cc >= min
+        {
+            out.insert(Str::from(cs), cc);
         }
         Ok(out)
     }

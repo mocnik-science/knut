@@ -172,7 +172,7 @@ pub fn segment_way(id: i64, versions: &[RawWay], store: &NodeStore, p: &SegParam
         .collect();
     let ns = slot_ids.len();
     let hist: Vec<Option<NodeHist>> = slot_ids.iter().map(|&n| store.get(n)).collect();
-    let private: Vec<bool> = hist.iter().map(|o| o.as_ref().map_or(false, |h| h.private)).collect();
+    let private: Vec<bool> = hist.iter().map(|o| o.as_ref().is_some_and(|h| h.private)).collect();
     let neff: Vec<Vec<i64>> = hist.iter().map(|o| o.as_ref().map_or_else(Vec::new, |h| h.eff_times())).collect();
 
     // events
@@ -220,22 +220,20 @@ pub fn segment_way(id: i64, versions: &[RawWay], store: &NodeStore, p: &SegParam
             i += 1;
         }
         let mut g = BBox::EMPTY;
-        if let Some(c) = cur {
-            if versions[c].meta.visible {
+        if let Some(c) = cur
+            && versions[c].meta.visible {
                 for &s in &vlists[c] {
                     if let Some((x, y)) = pos[s as usize] {
                         g.extend(x, y);
                     }
                 }
             }
-        }
         let mut extra = BBox::EMPTY;
         for &s in &touched {
-            if private[s as usize] && in_way[s as usize] == 0 {
-                if let Some((x, y)) = pos[s as usize] {
+            if private[s as usize] && in_way[s as usize] == 0
+                && let Some((x, y)) = pos[s as usize] {
                     extra.extend(x, y);
                 }
-            }
         }
         if should_split(p, &sbg, &g) {
             starts.push(t);
@@ -319,7 +317,7 @@ pub fn segment_way(id: i64, versions: &[RawWay], store: &NodeStore, p: &SegParam
                         tmin_abs = tmin_abs.min(neff[s][j]);
                         tmax_rec = tmax_rec.max(neff[s][j]);
                     }
-                    if h.entries.last().map_or(false, |e| e.visible) {
+                    if h.entries.last().is_some_and(|e| e.visible) {
                         all_private_deleted = false;
                     }
                     es

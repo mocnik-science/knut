@@ -89,7 +89,7 @@ impl Sink {
             self.sample_bytes[t] += bytes.len();
             self.samples[t].push(Row { key, bbox, bytes: bytes.to_vec() });
         }
-        if self.chunks.last().map_or(true, |c| c.len() + bytes.len() > CHUNK_BYTES) {
+        if self.chunks.last().is_none_or(|c| c.len() + bytes.len() > CHUNK_BYTES) {
             self.chunks.push(Vec::with_capacity(CHUNK_BYTES.max(bytes.len())));
         }
         let ci = self.chunks.len() - 1;
@@ -111,7 +111,7 @@ impl Sink {
 
     fn spill(&mut self) -> Result<()> {
         self.entries.par_sort_unstable_by_key(|e| e.key);
-        let parts: Vec<&[Entry]> = self.entries.chunks(((self.entries.len() + 7) / 8).max(1)).collect();
+        let parts: Vec<&[Entry]> = self.entries.chunks(self.entries.len().div_ceil(8).max(1)).collect();
         let paths: Vec<PathBuf> = parts.iter().map(|_| tmp_path(&self.tmp, "rows")).collect();
         parts.par_iter().zip(&paths).try_for_each(|(part, path)| -> Result<()> {
             let f = File::create(path)?;
@@ -269,16 +269,15 @@ impl<'a> BlockFormer<'a> {
 
     fn push(&mut self, r: Row) -> Option<Vec<Row>> {
         let mut done = None;
-        if let Some(first) = self.cur.first() {
-            if r.key.section != first.key.section
+        if let Some(first) = self.cur.first()
+            && (r.key.section != first.key.section
                 || self.acc + r.bytes.len() > self.opt.block_size
                 || self.cur.len() >= MAX_SEGMENTS_PER_BLOCK
-                || (r.key.section < 3 && !self.compact(&r.bbox))
-            {
-                done = Some(std::mem::take(&mut self.cur));
-                self.acc = 0;
-                self.bb = BBox::EMPTY;
-            }
+                || (r.key.section < 3 && !self.compact(&r.bbox)))
+        {
+            done = Some(std::mem::take(&mut self.cur));
+            self.acc = 0;
+            self.bb = BBox::EMPTY;
         }
         self.acc += r.bytes.len();
         self.bb.union(&r.bbox);

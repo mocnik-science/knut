@@ -63,10 +63,10 @@ fn geometry_from(cols: &[(String, String)]) -> Option<Geom> {
     let get = |names: &[&str]| -> Option<&str> {
         cols.iter().find(|(k, _)| names.contains(&k.to_ascii_lowercase().as_str())).map(|(_, v)| v.as_str())
     };
-    if let Some(w) = get(&["geometry", "wkt", "geom", "the_geom"]) {
-        if let Some(g) = geom::parse_wkt(w) {
-            return Some(g);
-        }
+    if let Some(w) = get(&["geometry", "wkt", "geom", "the_geom"])
+        && let Some(g) = geom::parse_wkt(w)
+    {
+        return Some(g);
     }
     let lon = get(&["lon", "lng", "longitude", "x"])?.trim().parse::<f64>().ok()?;
     let lat = get(&["lat", "latitude", "y"])?.trim().parse::<f64>().ok()?;
@@ -74,7 +74,7 @@ fn geometry_from(cols: &[(String, String)]) -> Option<Geom> {
 }
 
 fn read_csv(path: &Path) -> Result<Vec<Row>, String> {
-    let delim = if path.extension().map_or(false, |e| e == "tsv") { b'\t' } else { b',' };
+    let delim = if path.extension().is_some_and(|e| e == "tsv") { b'\t' } else { b',' };
     let mut rd = csv::ReaderBuilder::new().delimiter(delim).flexible(true).from_path(path).map_err(|e| e.to_string())?;
     let headers: Vec<String> = rd.headers().map_err(|e| e.to_string())?.iter().map(|s| s.to_string()).collect();
     let mut out = Vec::new();

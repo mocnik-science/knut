@@ -460,7 +460,7 @@ fn get_bbox(b: &[u8], o: usize) -> Result<BBox> {
 
 /// Pads `out` with zeros to the next multiple of 8.
 pub fn pad8(out: &mut Vec<u8>) {
-    while out.len() % 8 != 0 {
+    while !out.len().is_multiple_of(8) {
         out.push(0);
     }
 }

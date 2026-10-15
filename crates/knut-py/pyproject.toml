@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1..00"]
+requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
@@ -11,7 +11,7 @@ dynamic = ["version"]
 dependencies = []
 
 [project.optional-dependencies]
-arrow = ["pyarrow>=12"]
+arrow = ["pyarrow>=14"]
 
 [tool.maturin]
 python-source = "python"

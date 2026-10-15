@@ -144,7 +144,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn last_glued(&self, start: usize) -> bool {
-        self.out.last().map_or(false, |t| t.span.end as usize == start && t.tok != Tok::Newline)
+        self.out.last().is_some_and(|t| t.span.end as usize == start && t.tok != Tok::Newline)
     }
 
     /// Decides at a line break whether the statement continues (§2.1).

@@ -47,26 +47,27 @@ pub fn way_is_area(tags: &Tags) -> bool {
     if get(tags, "type") == Some("multipolygon") {
         return true;
     }
-    if let Some(v) = get(tags, "waterway") {
-        if matches!(v, "riverbank" | "dock" | "boatyard" | "dam") {
-            return true;
-        }
+    if let Some(v) = get(tags, "waterway")
+        && matches!(v, "riverbank" | "dock" | "boatyard" | "dam")
+    {
+        return true;
     }
-    if let Some(v) = get(tags, "highway") {
-        if matches!(v, "rest_area" | "services") {
-            return true;
-        }
+    if let Some(v) = get(tags, "highway")
+        && matches!(v, "rest_area" | "services")
+    {
+        return true;
     }
-    if let Some(v) = get(tags, "railway") {
-        if matches!(v, "platform" | "station" | "turntable") {
-            return true;
-        }
+    if let Some(v) = get(tags, "railway")
+        && matches!(v, "platform" | "station" | "turntable")
+    {
+        return true;
     }
     for (k, linear) in AREA_KEYS {
-        if let Some(v) = get(tags, k) {
-            if v != "no" && !linear.contains(&v) {
-                return true;
-            }
+        if let Some(v) = get(tags, k)
+            && v != "no"
+            && !linear.contains(&v)
+        {
+            return true;
         }
     }
     false

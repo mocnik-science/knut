@@ -3,7 +3,6 @@ name = "knut-plan"
 description = "knut language: name resolution, type and unit checks, pushdown analysis"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 
 [dependencies]

@@ -3,7 +3,6 @@ name = "knut-cli"
 description = "knut command line tool"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
@@ -25,6 +24,6 @@ zstd.workspace = true
 arrow-array.workspace = true
 arrow-schema.workspace = true
 arrow-buffer.workspace = true
-parquet = { version = "45", default-features = false, features = ["arrow", "zstd"] }
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
 
 [dev-dependencies]

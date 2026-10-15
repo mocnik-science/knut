@@ -37,7 +37,7 @@ fn pfor(vals: &[u64]) -> Vec<u8> {
         bitpack(main.iter().copied(), w, &mut b);
         put_u64_column(&mut b, &pos);
         put_u64_column(&mut b, &exc);
-        if best.as_ref().map_or(true, |x| b.len() < x.len()) {
+        if best.as_ref().is_none_or(|x| b.len() < x.len()) {
             best = Some(b);
         }
     }

@@ -240,12 +240,13 @@ fn elem_field(ctx: &Ctx, v: &Value, e: &Arc<Elem>, f: &str, span: Span) -> R<Val
         "nodes" => {
             let mut ids: Vec<i64> = e.v.nodes.to_vec();
             // ways decoded without geometry carry no node list
-            if ids.is_empty() && e.otype == Some(ObjType::Way) && e.v.visible {
-                if let Ok(db) = ctx.db() {
-                    if let Some(Some((nids, _))) = db.way_geoms(&[(e.id, e.at)]).get(&(e.id, e.at)) {
-                        ids = nids.clone();
-                    }
-                }
+            if ids.is_empty()
+                && e.otype == Some(ObjType::Way)
+                && e.v.visible
+                && let Ok(db) = ctx.db()
+                && let Some(Some((nids, _))) = db.way_geoms(&[(e.id, e.at)]).get(&(e.id, e.at))
+            {
+                ids = nids.clone();
             }
             let reqs: Vec<(i64, i64)> = ids.iter().map(|&i| (i, e.at)).collect();
             let pos = ctx.db().map(|db| db.positions(&reqs)).unwrap_or_default();

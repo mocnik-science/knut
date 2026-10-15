@@ -200,7 +200,7 @@ impl NodeStoreWriter {
     }
 
     pub fn push(&mut self, id: i64, private: bool, entries: impl IntoIterator<Item = StoreEntry>) -> Result<()> {
-        if self.last_id.map_or(false, |l| l >= id) {
+        if self.last_id.is_some_and(|l| l >= id) {
             return Err(err("node store: ids not increasing"));
         }
         self.last_id = Some(id);

@@ -119,7 +119,7 @@ pub fn derived_fields(body: &SegmentBody, time_base: i64) -> (Option<u32>, u32, 
                     bbox.extend(v.lon, v.lat);
                 }
             }
-            vs.last().map_or(false, |v| v.meta.visible)
+            vs.last().is_some_and(|v| v.meta.visible)
         }
         SegmentBody::Way { slots, versions } => {
             for v in versions.iter().filter(|v| !v.meta.continuation) {
@@ -129,15 +129,15 @@ pub fn derived_fields(body: &SegmentBody, time_base: i64) -> (Option<u32>, u32, 
                 for e in es.iter().filter(|e| !e.continuation) {
                     see(e.timestamp);
                 }
-                private_alive |= es.last().map_or(false, |e| e.visible);
+                private_alive |= es.last().is_some_and(|e| e.visible);
             }
-            versions.last().map_or(false, |v| v.meta.visible)
+            versions.last().is_some_and(|v| v.meta.visible)
         }
         SegmentBody::Relation(vs) => {
             for v in vs.iter().filter(|v| !v.meta.continuation) {
                 see(v.meta.timestamp);
             }
-            vs.last().map_or(false, |v| v.meta.visible)
+            vs.last().is_some_and(|v| v.meta.visible)
         }
     };
     let rmin = tmin.map(|t| rel_time(t, time_base));
@@ -276,8 +276,8 @@ impl ListEnc {
 
     /// Returns the range of `cur` that must be emitted as items, plus whether it is a diff.
     fn choose<T: PartialEq>(&mut self, prev: Option<&[T]>, cur: &[T], interval: u32) -> (usize, usize, bool) {
-        if let Some(prev) = prev {
-            if self.since_key + 1 < interval {
+        if let Some(prev) = prev
+            && self.since_key + 1 < interval {
                 let (p, d, ins) = diff::diff(prev, cur);
                 if 3 + ins.len() < 1 + cur.len() {
                     self.kind.push(1);
@@ -286,7 +286,6 @@ impl ListEnc {
                     return (p, p + ins.len(), true);
                 }
             }
-        }
         self.kind.push(0);
         self.nums.push(cur.len() as u64);
         self.since_key = 0;
@@ -1255,7 +1254,7 @@ pub fn decode_data_filtered(
                         1 => {
                             let pl = prev_len.ok_or_else(|| corrupt("diff without previous list"))?;
                             let (prefix, del, len) = (nums.next()? as usize, nums.next()? as usize, nums.next()? as usize);
-                            if prefix.checked_add(del).map_or(true, |x| x > pl) {
+                            if prefix.checked_add(del).is_none_or(|x| x > pl) {
                                 return Err(corrupt("list diff range"));
                             }
                             ListOp { key: false, prefix, del, start, len }

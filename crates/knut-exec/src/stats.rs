@@ -57,7 +57,7 @@ pub fn binned(vs: &[Value]) -> Option<Grouped> {
     for v in vs {
         match v {
             Value::Num(n) if n.v.is_finite() => {
-                if tmpl.map_or(false, |t| t.dim != n.dim) {
+                if tmpl.is_some_and(|t| t.dim != n.dim) {
                     return None;
                 }
                 tmpl.get_or_insert(*n);
@@ -496,7 +496,7 @@ pub fn knn(train: &[(Vec<f64>, Value)], query: &[Vec<f64>]) -> (Vec<Option<Value
     };
     let preds = query.iter().map(|q| vote(&z(q), None)).collect();
     let acc = if tz.len() > 1 {
-        let ok = tz.iter().enumerate().filter(|(i, (x, l))| vote(x, Some(*i)).map_or(false, |p| p.key() == l.key())).count();
+        let ok = tz.iter().enumerate().filter(|(i, (x, l))| vote(x, Some(*i)).is_some_and(|p| p.key() == l.key())).count();
         Some(ok as f64 / tz.len() as f64)
     } else {
         None

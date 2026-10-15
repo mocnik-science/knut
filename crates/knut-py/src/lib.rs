@@ -1,11 +1,14 @@
 //! Python bindings: `knut._knut`.
 
+use arrow_array::ffi_stream::FFI_ArrowArrayStream;
+use arrow_array::{RecordBatch, RecordBatchIterator};
 use knut_format::time::parse_time;
 use knut_format::{BBox, ObjType, e7_to_deg};
+use knut::arrow::{feature_schema, features_to_batches};
 use knut::{Feature, Filter, OpenOptions, Reader};
 use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyCapsule, PyDict, PyList};
 use std::sync::Arc;
 
 fn err(e: impl std::fmt::Display) -> PyErr {
@@ -17,7 +20,7 @@ fn obj_type(s: &str) -> PyResult<ObjType> {
 }
 
 /// Accepts int (Unix seconds), str (ISO 8601) or datetime.
-fn time_arg(v: &PyAny) -> PyResult<i64> {
+fn time_arg(v: &Bound<'_, PyAny>) -> PyResult<i64> {
     if let Ok(i) = v.extract::<i64>() {
         return Ok(i);
     }
@@ -31,23 +34,6 @@ fn time_arg(v: &PyAny) -> PyResult<i64> {
     Err(PyValueError::new_err("time must be int, str or datetime"))
 }
 
-/// pyarrow schema of `ArrowResult.to_arrow()`, matching the dicts of `to_pylist()`.
-const ARROW_SCHEMA: &str = "pa.schema([
-    ('type', pa.string()),
-    ('id', pa.int64()),
-    ('version', pa.int32()),
-    ('timestamp', pa.timestamp('s', tz='UTC')),
-    ('changeset', pa.int64()),
-    ('uid', pa.int64()),
-    ('visible', pa.bool_()),
-    ('tags', pa.map_(pa.string(), pa.string())),
-    ('lon', pa.float64()),
-    ('lat', pa.float64()),
-    ('coords', pa.list_(pa.struct([('lon', pa.float64()), ('lat', pa.float64())]))),
-    ('nodes', pa.list_(pa.int64())),
-    ('members', pa.list_(pa.struct([('type', pa.string()), ('ref', pa.int64()), ('role', pa.string())]))),
-])";
-
 fn bbox_arg(b: Option<(f64, f64, f64, f64)>) -> BBox {
     match b {
         Some((a, c, d, e)) => BBox::from_deg(a, c, d, e),
@@ -55,7 +41,7 @@ fn bbox_arg(b: Option<(f64, f64, f64, f64)>) -> BBox {
     }
 }
 
-/// Query result: a list of features.
+/// Query result: a list of features exposed as an Arrow stream.
 #[pyclass(module = "knut._knut")]
 pub struct ArrowResult {
     features: Arc<Vec<Feature>>,
@@ -67,18 +53,27 @@ impl ArrowResult {
         self.features.len()
     }
 
-    /// Converts to a ``pyarrow.Table`` (requires pyarrow ≥ 12).
-    fn to_arrow<'py>(&self, py: Python<'py>) -> PyResult<&'py PyAny> {
-        let rows = self.to_pylist(py)?;
-        let locals = PyDict::new(py);
-        locals.set_item("pa", py.import("pyarrow")?)?;
-        // fixed schema: without it pyarrow takes the columns from the first row only
-        let schema = py.eval(ARROW_SCHEMA, None, Some(locals))?;
-        py.import("pyarrow")?.getattr("Table")?.call_method1("from_pylist", (rows, schema))
+    /// Arrow PyCapsule interface.
+    #[pyo3(signature = (requested_schema=None))]
+    fn __arrow_c_stream__<'py>(
+        &self,
+        py: Python<'py>,
+        requested_schema: Option<Bound<'py, PyAny>>,
+    ) -> PyResult<Bound<'py, PyCapsule>> {
+        let _ = requested_schema;
+        let batches: Vec<RecordBatch> = features_to_batches(&self.features, 65_536).map_err(err)?;
+        let reader = RecordBatchIterator::new(batches.into_iter().map(Ok), feature_schema());
+        let stream = FFI_ArrowArrayStream::new(Box::new(reader));
+        PyCapsule::new_with_value(py, stream, c"arrow_array_stream")
+    }
+
+    /// Converts to a ``pyarrow.Table`` (requires pyarrow).
+    fn to_arrow<'py>(slf: Bound<'py, Self>, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        py.import("pyarrow")?.call_method1("table", (slf,))
     }
 
     /// Converts to a list of dicts (no dependencies).
-    fn to_pylist<'py>(&self, py: Python<'py>) -> PyResult<&'py PyList> {
+    fn to_pylist<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
         let out = PyList::empty(py);
         for f in self.features.iter() {
             let d = PyDict::new(py);
@@ -167,12 +162,12 @@ impl Knut {
     #[new]
     #[pyo3(signature = (path, verify_checksums=true, cache_blocks=1024))]
     fn new(py: Python<'_>, path: String, verify_checksums: bool, cache_blocks: usize) -> PyResult<Knut> {
-        let r = py.allow_threads(|| Reader::open_with(&path, OpenOptions { verify_checksums, cache_blocks })).map_err(err)?;
+        let r = py.detach(|| Reader::open_with(&path, OpenOptions { verify_checksums, cache_blocks })).map_err(err)?;
         Ok(Knut { r: Arc::new(r), path })
     }
 
     /// Header information as a dict.
-    fn info<'py>(&self, py: Python<'py>) -> PyResult<&'py PyDict> {
+    fn info<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let h = &self.r.header;
         let d = PyDict::new(py);
         d.set_item("format", format!("{}.{}", h.format_major, h.format_minor))?;
@@ -194,14 +189,14 @@ impl Knut {
     fn get(&self, py: Python<'_>, r#type: &str, id: i64) -> PyResult<ArrowResult> {
         let t = obj_type(r#type)?;
         let r = self.r.clone();
-        Ok(result(py.allow_threads(|| r.get(t, id)).map_err(err)?))
+        Ok(result(py.detach(|| r.get(t, id)).map_err(err)?))
     }
 
     /// The version valid at `time` (empty result if none).
-    fn at(&self, py: Python<'_>, r#type: &str, id: i64, time: &PyAny) -> PyResult<ArrowResult> {
+    fn at(&self, py: Python<'_>, r#type: &str, id: i64, time: &Bound<'_, PyAny>) -> PyResult<ArrowResult> {
         let (t, ts) = (obj_type(r#type)?, time_arg(time)?);
         let r = self.r.clone();
-        Ok(result(py.allow_threads(|| r.at(t, id, ts)).map_err(err)?.into_iter().collect()))
+        Ok(result(py.detach(|| r.at(t, id, ts)).map_err(err)?.into_iter().collect()))
     }
 
     /// Objects within `bbox` (lon_min, lat_min, lon_max, lat_max) at `time`.
@@ -211,7 +206,7 @@ impl Knut {
         &self,
         py: Python<'_>,
         bbox: Option<(f64, f64, f64, f64)>,
-        time: &PyAny,
+        time: &Bound<'_, PyAny>,
         key: Option<String>,
         value: Option<String>,
         types: Option<Vec<String>>,
@@ -223,7 +218,7 @@ impl Knut {
         let ts = time_arg(time)?;
         let f = make_filter(types, key, value, uid, changeset, include_private_nodes, geometry)?;
         let (r, b) = (self.r.clone(), bbox_arg(bbox));
-        Ok(result(py.allow_threads(|| r.snapshot(&b, ts, &f)).map_err(err)?))
+        Ok(result(py.detach(|| r.snapshot(&b, ts, &f)).map_err(err)?))
     }
 
     /// All versions with `t0 <= timestamp <= t1` within `bbox`.
@@ -233,8 +228,8 @@ impl Knut {
         &self,
         py: Python<'_>,
         bbox: Option<(f64, f64, f64, f64)>,
-        t0: &PyAny,
-        t1: &PyAny,
+        t0: &Bound<'_, PyAny>,
+        t1: &Bound<'_, PyAny>,
         key: Option<String>,
         value: Option<String>,
         types: Option<Vec<String>>,
@@ -246,7 +241,7 @@ impl Knut {
         let (a, z) = (time_arg(t0)?, time_arg(t1)?);
         let f = make_filter(types, key, value, uid, changeset, include_private_nodes, geometry)?;
         let (r, b) = (self.r.clone(), bbox_arg(bbox));
-        Ok(result(py.allow_threads(|| r.changes(&b, a, z, &f)).map_err(err)?))
+        Ok(result(py.detach(|| r.changes(&b, a, z, &f)).map_err(err)?))
     }
 
     /// Way geometry at `time`: list of (node_id, lon, lat) (lon/lat None if unknown), or None.
@@ -254,11 +249,11 @@ impl Knut {
         &self,
         py: Python<'_>,
         id: i64,
-        time: &PyAny,
+        time: &Bound<'_, PyAny>,
     ) -> PyResult<Option<Vec<(i64, Option<f64>, Option<f64>)>>> {
         let ts = time_arg(time)?;
         let r = self.r.clone();
-        let g = py.allow_threads(|| r.way_geometry_at(id, ts)).map_err(err)?;
+        let g = py.detach(|| r.way_geometry_at(id, ts)).map_err(err)?;
         Ok(g.map(|g| g.into_iter().map(|(n, p)| (n, p.map(|q| e7_to_deg(q.0)), p.map(|q| e7_to_deg(q.1)))).collect()))
     }
 
@@ -270,7 +265,7 @@ impl Knut {
         id: i64,
     ) -> PyResult<Vec<(i64, Vec<(i64, Option<f64>, Option<f64>)>)>> {
         let r = self.r.clone();
-        let g = py.allow_threads(|| r.way_geometry_changes(id)).map_err(err)?;
+        let g = py.detach(|| r.way_geometry_changes(id)).map_err(err)?;
         Ok(g.into_iter()
             .map(|(t, g)| (t, g.into_iter().map(|(n, p)| (n, p.map(|q| e7_to_deg(q.0)), p.map(|q| e7_to_deg(q.1)))).collect()))
             .collect())
@@ -280,9 +275,10 @@ impl Knut {
     #[pyo3(signature = (deep=false))]
     fn verify(&self, py: Python<'_>, deep: bool) -> PyResult<(u64, u64)> {
         let r = self.r.clone();
-        let rep = py.allow_threads(|| r.verify(deep)).map_err(err)?;
+        let rep = py.detach(|| r.verify(deep)).map_err(err)?;
         Ok((rep.blocks, rep.segments))
     }
+
     /// Path of the opened file.
     #[getter]
     fn path(&self) -> &str {
@@ -295,7 +291,7 @@ impl Knut {
 #[pyfunction]
 #[pyo3(signature = (script, db=None, base_dir=None, file=None))]
 fn run_script(py: Python<'_>, script: String, db: Option<String>, base_dir: Option<String>, file: Option<String>) -> (i32, String, String) {
-    py.allow_threads(|| {
+    py.detach(|| {
         let opts = knut_exec::Options { db: db.map(Into::into), format: knut_exec::Format::Json, timing: false, ..Default::default() };
         let base = std::path::PathBuf::from(base_dir.unwrap_or_else(|| ".".into()));
         let (mut out, mut errs) = (Vec::new(), Vec::new());
@@ -305,7 +301,7 @@ fn run_script(py: Python<'_>, script: String, db: Option<String>, base_dir: Opti
 }
 
 #[pymodule]
-fn _knut(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+fn _knut(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_script, m)?)?;
     m.add_class::<Knut>()?;
     m.add_class::<ArrowResult>()?;

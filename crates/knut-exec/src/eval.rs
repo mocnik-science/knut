@@ -303,10 +303,10 @@ impl Ctx {
         }
         let Value::Set(s) = base else { return Ok(Value::None) };
         let parts = s.fold(self, Hints::default(), &Vec::new, &|acc: &mut Vec<Value>, v: Value| {
-            if let Value::Tuple(t) = v {
-                if let Some(e) = t.items.get(pos) {
-                    acc.push(Value::Elem(e.clone()));
-                }
+            if let Value::Tuple(t) = v
+                && let Some(e) = t.items.get(pos)
+            {
+                acc.push(Value::Elem(e.clone()));
             }
             Ok(())
         })?;
@@ -412,13 +412,9 @@ impl Ctx {
                     Some((x, None)) => match want {
                         Some(d) if !d.is_none() => {
                             // documented default unit of the key (maxspeed → km/h, height → m)
-                            let du = match v {
-                                Value::Tag(t) => units::default_unit(&t.key).filter(|u| u.dim == d),
-                                _ => None,
-                            };
-                            match du {
-                                Some(u) => Ok(Some(Num::with_unit(x, u))),
-                                None => Err(self.e304(v, span, d)),
+                            match v {
+                                Value::Tag(t) if let Some(u) = units::default_unit(&t.key).filter(|u| u.dim == d) => Ok(Some(Num::with_unit(x, u))),
+                                _ => Err(self.e304(v, span, d)),
                             }
                         }
                         _ => Ok(Some(Num::plain(x))),
@@ -481,7 +477,7 @@ impl Ctx {
                 let out: Vec<Value> = items
                     .iter()
                     .filter(|v| match v {
-                        Value::Elem(e) => e.tag(key).map_or(false, |x| want.map_or(true, |w| x.as_ref() == w)),
+                        Value::Elem(e) => e.tag(key).is_some_and(|x| want.is_none_or(|w| x.as_ref() == w)),
                         _ => false,
                     })
                     .cloned()
@@ -657,7 +653,7 @@ impl Ctx {
                     Value::Region(_) => return self.within(&a, &b, e.span).map(Value::Bool),
                     Value::Text(_) | Value::Tag(_) => {
                         let hay = b.as_text().unwrap();
-                        a.as_text().map_or(false, |n| hay.split(';').any(|p| p.trim() == n))
+                        a.as_text().is_some_and(|n| hay.split(';').any(|p| p.trim() == n))
                     }
                     _ => false,
                 };
@@ -699,7 +695,7 @@ impl Ctx {
                 }
                 let next = matches!(t, RelTail::NextOf(_));
                 let n = crate::fields::neighbour(self, &a, next);
-                Ok(Value::Bool(n.map_or(false, |n| n.v.version == b.v.version)))
+                Ok(Value::Bool(n.is_some_and(|n| n.v.version == b.v.version)))
             }
             RelTail::Before(r) | RelTail::After(r) => {
                 let d = self.eval(l, sc)?;
@@ -801,10 +797,10 @@ impl Ctx {
     pub fn rep_point(&self, v: &Value) -> Option<geom::P> {
         match v {
             Value::Elem(e) => {
-                if let Some(g) = e.geom.get() {
-                    if let Some(p) = g.rep_point() {
-                        return Some(p);
-                    }
+                if let Some(g) = e.geom.get()
+                    && let Some(p) = g.rep_point()
+                {
+                    return Some(p);
                 }
                 match &e.extra {
                     Extra::Changeset(c) => return Some(c.bbox.center()),
@@ -860,7 +856,7 @@ impl Ctx {
             return Ok(false);
         }
         let r = self.region_of(reg, span)?;
-        Ok(self.rep_point(x).map_or(false, |p| r.contains(p)))
+        Ok(self.rep_point(x).is_some_and(|p| r.contains(p)))
     }
 
     // ----- selections ----------------------------------------------------------------------
@@ -1132,23 +1128,23 @@ impl Ctx {
                     return Err(RtErr::data(d));
                 }
                 let v = all.into_iter().next().unwrap();
-                if let (Some(k), Value::Elem(el)) = (ek, &v) {
-                    if el.kind != k {
-                        let full = self.text(e.span).to_string();
-                        return Err(RtErr::data(
-                            Diagnostic::error(
-                                "E403",
-                                Span { start: e.span.start, end: e.span.start + 3 + 1 + k.name().len() as u32 },
-                                Text2::new(
-                                    format!("Expected {} {}, but the single result is {} {}.", article(k.name()), k.name(), article(el.kind.name()), el.kind.name()),
-                                    format!("Erwartet war {} {}, das einzige Ergebnis ist aber {} {}.", artikel(k.name()), k.name(), artikel(el.kind.name()), el.kind.name()),
-                                ),
-                            )
-                            .why(format!("{} matches.", el.label()), format!("{} passt.", el.label()))
-                            .header(Header::YouCan)
-                            .sugg_label(&format!("leave out \"{}\":", k.name()), &format!("\"{}\" weglassen:", k.name()), full.replacen(&format!(" {} ", k.name()), " ", 1)),
-                        ));
-                    }
+                if let (Some(k), Value::Elem(el)) = (ek, &v)
+                    && el.kind != k
+                {
+                    let full = self.text(e.span).to_string();
+                    return Err(RtErr::data(
+                        Diagnostic::error(
+                            "E403",
+                            Span { start: e.span.start, end: e.span.start + 3 + 1 + k.name().len() as u32 },
+                            Text2::new(
+                                format!("Expected {} {}, but the single result is {} {}.", article(k.name()), k.name(), article(el.kind.name()), el.kind.name()),
+                                format!("Erwartet war {} {}, das einzige Ergebnis ist aber {} {}.", artikel(k.name()), k.name(), artikel(el.kind.name()), el.kind.name()),
+                            ),
+                        )
+                        .why(format!("{} matches.", el.label()), format!("{} passt.", el.label()))
+                        .header(Header::YouCan)
+                        .sugg_label(&format!("leave out \"{}\":", k.name()), &format!("\"{}\" weglassen:", k.name()), full.replacen(&format!(" {} ", k.name()), " ", 1)),
+                    ));
                 }
                 Ok(v)
             }
@@ -1241,10 +1237,10 @@ pub fn match_sequence(ctx: &Ctx, q: &Query, seq: &Seq, h: &Arc<Hist>, f: &mut dy
         if !win.iter().zip(&seq.kinds).all(|(v, kk)| kind_ok(v, *kk)) {
             continue;
         }
-        if let Some((a, b)) = seq.t_range {
-            if !win.iter().all(|v| v.ts >= a && v.ts < b) {
-                continue;
-            }
+        if let Some((a, b)) = seq.t_range
+            && !win.iter().all(|v| v.ts >= a && v.ts < b)
+        {
+            continue;
         }
         if let Some((d, or_eq)) = seq.max_dt {
             let dt = (win[k - 1].ts - win[0].ts) as f64;
@@ -1263,7 +1259,7 @@ pub fn match_sequence(ctx: &Ctx, q: &Query, seq: &Seq, h: &Arc<Hist>, f: &mut dy
             .collect();
         if let Some(reg) = &q.spec.region {
             let p = ctx.rep_point(&Value::Elem(items[0].clone()));
-            if !p.map_or(false, |p| reg.contains(p)) {
+            if !p.is_some_and(|p| reg.contains(p)) {
                 continue;
             }
         }
