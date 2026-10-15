@@ -554,9 +554,10 @@ const App = {
         <h2>knut</h2>
         <p><em>knut</em> is short for <em>knutpunkt</em>, the Swedish word for ‘junction’ or ‘node’, one of the building blocks of OpenStreetMap data.</p>
         <p>It reads OpenStreetMap PBF files (with history) and converts them into its own compact, high-performance data format, which enables fast queries of OpenStreetMap data in Rust, in Python, on the command line, and in this web interface, using the <em>knut</em> query language.</p>
-        <p><em>knut</em> has been created by Franz-Benjamin Mocnik, University of Salzburg, and is released open source.</p>
-        <p>Copyright by Franz-Benjamin Mocnik, 2023–2026.</p>
-        <p>Parts of this software have been supported by the <em>EXDIGIT&nbsp;(Excellence in Digital Sciences and Interdisciplinary Technologies)</em> project, funded by Land Salzburg under grant number 20204-WISS/263/6-6022.</p>
+        <p>This application is written and maintained by Franz-Benjamin Mocnik, <a href="mailto:mail@mocnik-science.net">mail@mocnik-science.net</a>.</p>
+        <p>(c) by Franz-Benjamin Mocnik, 2023–2026.</p>
+        <p>Its parts written after September 2023 have been supported by the <em>EXDIGIT&nbsp;(Excellence in Digital Sciences and Interdisciplinary Technologies)</em> project, funded by Land Salzburg under grant number 20204-WISS/263/6-6022.</p>
+        <p>The code is licensed under the <a href="https://github.com/mocnik-science/knut/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>.</p>
         <p class="version" v-if="state.info && state.info.version">Version {{ state.info.version }}</p>
       </div>
     </Panel>
