@@ -114,7 +114,7 @@ Columns of the result tables.  Long scans release the GIL.
 ## Web
 
 ```bash
-knut web --db data/knut/bremen.knutdb
+./target/release/knut web --db data/knut/bremen.knutdb
 ```
 
 ## Tests
