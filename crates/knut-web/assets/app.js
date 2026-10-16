@@ -1,14 +1,24 @@
 // knut web: Vue 3 application (Composition API, templates compiled in the browser).
 import { createEditor } from "./editor.js";
 
-const { createApp, ref, reactive, computed, watch, nextTick, onMounted, markRaw } = Vue;
+const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, markRaw } = Vue;
 
-// The colours of knut: orange (the accent of the page), cyan, magenta, then colours that go
-// with them. Maps (and the result list) lead with magenta and cyan, the charts of the text
-// interface with orange.
-const KNUT_COLORS = ["#f7a740", "#36b4d2", "#cd68a0", "#7dc07a", "#8d7bd8", "#f06b5b", "#2e7fa8", "#c9b43c"];
-const CHAT_COLORS = KNUT_COLORS;
-const COLORS = ["#cd68a0", "#36b4d2", "#f7a740", ...KNUT_COLORS.slice(3)];
+// the animated logo, inlined so that it can be started: its animations run once, and only while
+// the element around it has the class "play"; their names don't clash with the page's
+function loaderMarkup(svg) {
+  return svg
+    .replace(/<metadata>[\s\S]*?<\/metadata>/, "")
+    .replace(/ role="img" aria-label="[^"]*"/, ' aria-hidden="true"')
+    .replace(/<style>([\s\S]*?)<\/style>/, (_, css) => "<style>" + css
+      .replace(/\.(hop|dot|paint|swoosh)\b/g, ".knut-loader.play .$1")
+      .replace(/@keyframes (\w+)/g, "@keyframes knut-$1")
+      .replace(/animation: (\w+) ([^;]*?)infinite/g, "animation: knut-$1 $2 1") + "</style>");
+}
+
+// The colours of knut: magenta, cyan and orange, then colours that go with them. Maps (and the
+// result list) use them in this order whatever the accent; the charts of the text interface lead
+// with the accent.
+const COLORS = ["#e64fa5", "#24c1e4", "#feaf3a", "#7dc07a", "#8d7bd8", "#f06b5b", "#2e7fa8", "#c9b43c"];
 const POLL_MS = 150;
 const CHECK_DELAY_MS = 400;
 
@@ -55,6 +65,8 @@ const ICONS = {
   moon: svg('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
   auto: svg('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
   settings: svg('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
+  // a new conversation
+  restart: svg('<path d="M21 6H3"/><path d="M7 12H3"/><path d="M7 18H3"/><path d="M12 18a5 5 0 0 0 9-3 4.5 4.5 0 0 0-4.5-4.5c-1.33 0-2.54.54-3.41 1.41L11 14"/><path d="M11 10v4h4"/>'),
   // About
   bird: svg('<path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="m20 7 2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/>'),
   // the text interface: questions in plain language
@@ -84,6 +96,67 @@ const THEMES = [
   { id: "dark", label: "Dark", title: "Dark colours", icon: ICONS.moon },
   { id: "auto", label: "Automatic", title: "As the system", icon: ICONS.auto },
 ];
+
+// ----- accent: the colour of the controls, chosen by name -------------------------------
+
+const ACCENTS = [
+  { id: "orange", label: "Orange", title: "Orange accent", color: "#feaf3a" },
+  { id: "magenta", label: "Magenta", title: "Magenta accent", color: "#e64fa5" },
+  { id: "cyan", label: "Cyan", title: "Cyan accent", color: "#24c1e4" },
+];
+const accent = ref(load("accent", "orange"));
+const accentColor = () => (ACCENTS.find(a => a.id === accent.value) || ACCENTS[0]).color;
+function applyAccent() {
+  const c = accentColor(), style = document.documentElement.style;
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+  style.setProperty("--accent", c);
+  style.setProperty("--hl-active", `rgba(${r}, ${g}, ${b}, 0.08)`);
+  style.setProperty("--hl-selection", `rgba(${r}, ${g}, ${b}, 0.3)`);
+}
+applyAccent();
+watch(accent, v => { store("accent", v); applyAccent(); });
+// the charts: the accent first, then the other colours of knut
+const chatColors = () => [accentColor(), ...COLORS.filter(c => c !== accentColor())];
+
+// ----- a choice in the top bar: only the chosen one shows, the others under the mouse (on a
+// touch screen, after a tap on it); they come in on its left -------------------------------
+
+const Pick = {
+  props: { items: Array, modelValue: String, label: String },
+  emits: ["update:modelValue"],
+  setup(props, { emit }) {
+    const open = ref(false);
+    const ordered = computed(() => [...props.items.filter(t => t.id !== props.modelValue), ...props.items.filter(t => t.id === props.modelValue)]);
+    function choose(t) {
+      if (t.id === props.modelValue) open.value = !open.value;
+      else { emit("update:modelValue", t.id); open.value = false; }
+    }
+    return { open, ordered, choose };
+  },
+  template: `
+    <div :class="['pick', { open }]" role="group" :aria-label="label" @mouseleave="open = false">
+      <button v-for="t in ordered" :key="t.id" :class="['icon', { active: t.id === modelValue }]" :title="t.title" :aria-label="t.title"
+        :aria-pressed="t.id === modelValue" @click="choose(t)">
+        <span v-if="t.color" class="swatch" :style="{ background: t.color }"></span>
+        <span v-else class="glyph" v-html="t.icon"></span>
+      </button>
+    </div>`,
+};
+
+// ----- about knut: in its tab of the editor, and in a box over the text interface ----------
+
+const AboutText = {
+  props: { info: Object },
+  template: `
+    <img class="logo" src="knut.svg" alt="knut">
+    <p><em>knut</em> is short for <em>knutpunkt</em>, the Swedish word for ‘junction’ or ‘node’, one of the building blocks of OpenStreetMap data.</p>
+    <p>It reads OpenStreetMap PBF files (with history) and converts them into its own compact, high-performance data format, which enables fast queries of OpenStreetMap data in Rust, in Python, on the command line, and in this web interface, using the <em>knut</em> query language.</p>
+    <p>This application is written and maintained by Franz-Benjamin Mocnik, <a href="mailto:mail@mocnik-science.net">mail@mocnik-science.net</a>.</p>
+    <p>(c) by Franz-Benjamin Mocnik, 2023–2026.</p>
+    <p>Its parts written after September 2023 have been supported by the <em>EXDIGIT&nbsp;(Excellence in Digital Sciences and Interdisciplinary Technologies)</em> project, funded by Land Salzburg under grant number 20204-WISS/263/6-6022.</p>
+    <p>The code is licensed under the <a href="https://github.com/mocnik-science/knut/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>.</p>
+    <p class="version" v-if="info && info.version">Version {{ info.version }}</p>`,
+};
 
 // ----- panel: slides out to a small strip, or fills the window --------------------------
 
@@ -409,7 +482,7 @@ const AnswerMap = {
   template: `
     <div class="answer-map">
       <div class="map" ref="el"></div>
-      <button v-if="stale" class="regenerate" :disabled="loading" @click="emit('regenerate')">{{ loading ? 're-generating…' : 'click to re-generate' }}</button>
+      <button v-if="stale" class="regenerate" :disabled="loading" @click="emit('regenerate')">{{ loading ? 'Re-generating …' : 'Click to re-generate' }}</button>
     </div>`,
 };
 
@@ -502,7 +575,7 @@ const AnswerChart = {
         const g = svg.selectAll("g").data(c.bars).join("g").attr("transform", (_, i) => `translate(0,${i * row + 4})`);
         g.append("text").attr("class", "label").attr("x", left - 8).attr("y", row / 2).attr("dy", "0.32em").attr("text-anchor", "end")
           .text(b => b.name.length > 30 ? b.name.slice(0, 29) + "…" : b.name);
-        g.append("rect").attr("x", left).attr("y", 3).attr("height", row - 7).attr("rx", 2).attr("fill", CHAT_COLORS[0]).attr("width", 0)
+        g.append("rect").attr("x", left).attr("y", 3).attr("height", row - 7).attr("rx", 2).attr("fill", chatColors()[0]).attr("width", 0)
           .transition().duration(500).attr("width", b => Math.max(1, x(b.value)));
         g.append("text").attr("class", "value").attr("y", row / 2).attr("dy", "0.32em").attr("x", b => left + x(b.value) + 6).text(b => d3.format(",")(b.value));
         if (c.more) box.append("div").attr("class", "chart-note").text(`and ${c.more} more`);
@@ -521,7 +594,7 @@ const AnswerChart = {
       svg.append("g").attr("class", "axis").attr("transform", `translate(${m.left},0)`).call(d3.axisLeft(y).ticks(5).tickFormat(d3.format("~s")));
       const line = d3.line().x(p => x(p.x)).y(p => y(p.y));
       c.series.forEach((s, i) => {
-        const color = CHAT_COLORS[i % CHAT_COLORS.length];
+        const color = chatColors()[i % COLORS.length];
         const path = svg.append("path").datum(s.points).attr("fill", "none").attr("stroke", color).attr("stroke-width", 2).attr("d", line);
         const len = path.node().getTotalLength();
         path.attr("stroke-dasharray", `${len} ${len}`).attr("stroke-dashoffset", len).transition().duration(700).attr("stroke-dashoffset", 0);
@@ -530,7 +603,7 @@ const AnswerChart = {
       });
       if (c.series.length > 1) {
         const lg = box.append("div").attr("class", "chart-legend");
-        c.series.forEach((s, i) => lg.append("span").html(`<i style="background:${CHAT_COLORS[i % CHAT_COLORS.length]}"></i>${escapeHtml(s.name)}`));
+        c.series.forEach((s, i) => lg.append("span").html(`<i style="background:${chatColors()[i % COLORS.length]}"></i>${escapeHtml(s.name)}`));
       }
     }
     onMounted(() => nextTick(draw));
@@ -540,7 +613,7 @@ const AnswerChart = {
 };
 
 const ChatView = {
-  components: { AnswerMap, AnswerChart },
+  components: { AnswerMap, AnswerChart, Pick, AboutText },
   props: { info: Object, db: String },
   emits: ["advanced", "open"],
   setup(props, { emit }) {
@@ -699,13 +772,11 @@ const ChatView = {
       turns.value = [];
       nextTick(() => input.value && input.value.focus());
     }
-    // the newest question moves up to the top of the view: its answer, map or chart builds up
-    // below it in sight (the list has room below its end for that)
+    // the list scrolls to its end: the newest answer sits a little above the input field
     function scrollDown(smooth = true) {
       const el = document.querySelector(".chat .turns");
-      const last = el && el.querySelector(".turn:last-of-type");
-      if (!last) return;
-      el.scrollTo({ top: Math.max(0, last.offsetTop - 56), behavior: smooth ? "smooth" : "auto" });
+      if (!el) return;
+      el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
     }
     // ↑ and ↓ go through the earlier questions (from the first or last line of the field); the
     // text being written comes back after the newest one
@@ -737,6 +808,30 @@ const ChatView = {
       else if (e.key === "ArrowDown") browse(e, 1);
     }
     onMounted(() => nextTick(() => { scrollDown(false); input.value && input.value.focus(); }));
+    // the logo on the start page: still; it moves once 100 ms after the first character, and
+    // again whenever the field was emptied and one starts anew
+    const loader = ref(null);
+    const loaderSvg = ref("");
+    fetch("knut-loading.svg").then(r => r.text()).then(svg => { loaderSvg.value = loaderMarkup(svg); }).catch(() => {});
+    let beat = null;
+    function play() {
+      const el = loader.value;
+      if (!el) return;
+      el.classList.remove("play");
+      void el.offsetWidth;
+      el.classList.add("play");
+    }
+    watch(text, (now, before) => {
+      if (turns.value.length || !now || before) return;
+      clearTimeout(beat);
+      beat = setTimeout(play, 100);
+    });
+    onUnmounted(() => clearTimeout(beat));
+    // about knut, in a box over the page: gone with a click beside it, or with Esc
+    const about = ref(false);
+    const closeAbout = e => { if (e.key === "Escape") about.value = false; };
+    window.addEventListener("keydown", closeAbout);
+    onUnmounted(() => window.removeEventListener("keydown", closeAbout));
     // copies a text; the symbol shows a check for a moment
     const copied = ref(null);
     function copy(text, id) {
@@ -745,24 +840,26 @@ const ChatView = {
       setTimeout(() => { if (copied.value === id) copied.value = null; }, 1200);
     }
     return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds, theme, THEMES, ICONS, copied, copy, shown, regenerate, showOnMap, mapQueryOf,
-      editing, editText, editBox, startEdit, submitEdit, editKey, retry };
+      editing, editText, editBox, startEdit, submitEdit, editKey, retry, loader, loaderSvg,
+      about, accent, ACCENTS };
   },
   template: `
     <div :class="['chat', { start: !turns.length }]">
       <!-- the logo moves to the corner once the one in the middle is gone -->
-      <img :class="['chat-brand', { shown: turns.length }]" src="knut.svg" alt="" aria-hidden="true">
+      <div :class="['chat-brand', { shown: turns.length }]" aria-hidden="true"><img src="knut.svg" alt=""></div>
       <div class="chat-top">
         <template v-if="turns.length">
-          <button class="word" :disabled="busy" title="Start a new conversation" @click="clear">New</button>
+          <button class="icon" :disabled="busy" title="Start a new conversation" aria-label="Start a new conversation" @click="clear" v-html="ICONS.restart"></button>
           <span class="sep">|</span>
         </template>
-        <button v-for="t in THEMES" :key="t.id" :class="['icon', { active: theme === t.id }]" :title="t.title" :aria-label="t.title"
-          :aria-pressed="theme === t.id" @click="theme = t.id" v-html="t.icon"></button>
+        <Pick :items="ACCENTS" v-model="accent" label="Accent colour" />
+        <Pick :items="THEMES" v-model="theme" label="Appearance" />
+        <button class="icon" title="About knut" aria-label="About knut" @click="about = true" v-html="ICONS.bird"></button>
         <span class="sep">|</span>
         <button class="icon" title="Advanced query editor" aria-label="Advanced query editor" @click="emit('advanced')" v-html="ICONS.rocket"></button>
       </div>
       <div class="turns">
-        <img v-if="!turns.length" class="chat-logo" src="knut-loading.svg" alt="knut">
+        <div v-if="!turns.length" ref="loader" class="chat-logo knut-loader" role="img" aria-label="knut" v-html="loaderSvg"></div>
         <div v-for="(t, i) in turns" :key="i" class="turn">
           <!-- a question being edited: asked again from here on (Enter), or left as it was (Esc) -->
           <div v-if="editing === i" class="question-edit">
@@ -812,18 +909,25 @@ const ChatView = {
           </div>
         </div>
       </div>
+      <div class="chat-foot">
       <div :class="['chat-input', { busy }]">
         <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask a follow-up question …' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
           @keydown="key" :disabled="busy && false"></textarea>
-        <button v-if="!busy" class="primary" :disabled="!text.trim()" title="Ask (Enter)" @click="ask">Ask</button>
+        <button v-if="!busy" :class="['primary', 'ask', { empty: !text.trim() }]" :disabled="!text.trim()" :tabindex="text.trim() ? 0 : -1" title="Ask (Enter)" @click="ask">Ask</button>
         <button v-else class="danger" title="Cancel (Esc)" @click="cancel">Cancel</button>
       </div>
       <p v-if="turns.length" class="chat-disclaimer">knut is experimental and might be mistaken.</p>
+      </div>
+      <Transition name="fade">
+        <div v-if="about" class="about-overlay" @click.self="about = false">
+          <div class="about-box docs about" role="dialog" aria-label="About knut"><AboutText :info="info" /></div>
+        </div>
+      </Transition>
     </div>`,
 };
 
 const App = {
-  components: { Panel, MapView, ChatView },
+  components: { Panel, MapView, ChatView, AboutText },
   setup() {
     const map = ref(null);
     const editorHost = ref(null);
@@ -1064,7 +1168,7 @@ const App = {
       state, map, editorHost, goToLine, messageLines,
       run, cancel, reset, progressPct, progressLabel, progressRight, filtered, useExample,
       summary, toggleLayer, zoomTo, saveJson, saveGeojson, copyText, COLORS, fmtSeconds, theme, textMode, openTurn,
-      themes: THEMES, ICONS,
+      themes: THEMES, ICONS, accent, accents: ACCENTS,
     };
   },
   template: `
@@ -1138,17 +1242,19 @@ const App = {
             </button>
           </div>
         </section>
+        <section>
+          <h3>Accent colour</h3>
+          <div class="themes" role="radiogroup" aria-label="Accent colour">
+            <button v-for="a in accents" :key="a.id" role="radio" :aria-checked="accent === a.id"
+              :class="{ active: accent === a.id }" :title="a.title" @click="accent = a.id">
+              <span class="swatch" :style="{ background: a.color }"></span>{{ a.label }}
+            </button>
+          </div>
+        </section>
       </div>
 
       <div v-if="state.tab === 'about'" class="docs about">
-        <img class="logo" src="knut.svg" alt="knut">
-        <p><em>knut</em> is short for <em>knutpunkt</em>, the Swedish word for ‘junction’ or ‘node’, one of the building blocks of OpenStreetMap data.</p>
-        <p>It reads OpenStreetMap PBF files (with history) and converts them into its own compact, high-performance data format, which enables fast queries of OpenStreetMap data in Rust, in Python, on the command line, and in this web interface, using the <em>knut</em> query language.</p>
-        <p>This application is written and maintained by Franz-Benjamin Mocnik, <a href="mailto:mail@mocnik-science.net">mail@mocnik-science.net</a>.</p>
-        <p>(c) by Franz-Benjamin Mocnik, 2023–2026.</p>
-        <p>Its parts written after September 2023 have been supported by the <em>EXDIGIT&nbsp;(Excellence in Digital Sciences and Interdisciplinary Technologies)</em> project, funded by Land Salzburg under grant number 20204-WISS/263/6-6022.</p>
-        <p>The code is licensed under the <a href="https://github.com/mocnik-science/knut/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>.</p>
-        <p class="version" v-if="state.info && state.info.version">Version {{ state.info.version }}</p>
+        <AboutText :info="state.info" />
       </div>
     </Panel>
 

@@ -5,7 +5,7 @@
   --fg: #1d2129;
   --fg-soft: #5d6470;
   --border: #d9dce1;
-  --accent: #f7a740;
+  --accent: #feaf3a;
   --accent-fg: #1d2129;
   --danger: #c93a3a;
   --warn: #a86b00;
@@ -26,8 +26,8 @@
   --hl-atom: #b5341c;
   --hl-operator: #6b7280;
   --hl-comment: #8a919c;
-  --hl-active: rgba(247, 167, 64, 0.08);
-  --hl-selection: rgba(247, 167, 64, 0.28);
+  --hl-active: rgba(254, 175, 58, 0.08);
+  --hl-selection: rgba(254, 175, 58, 0.28);
   color-scheme: light;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
@@ -40,7 +40,7 @@
     --fg: #e4e6ea;
     --fg-soft: #9aa1ac;
     --border: #353a43;
-    --accent: #f7a740;
+    --accent: #feaf3a;
     --danger: #ef6b6b;
     --warn: #e0a83a;
     --ok: #5cbf73;
@@ -56,8 +56,8 @@
     --hl-atom: #f28b74;
     --hl-operator: #9aa1ac;
     --hl-comment: #6b7380;
-    --hl-active: rgba(247, 167, 64, 0.08);
-    --hl-selection: rgba(247, 167, 64, 0.3);
+    --hl-active: rgba(254, 175, 58, 0.08);
+    --hl-selection: rgba(254, 175, 58, 0.3);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -68,7 +68,7 @@
     --fg: #e4e6ea;
     --fg-soft: #9aa1ac;
     --border: #353a43;
-    --accent: #f7a740;
+    --accent: #feaf3a;
     --danger: #ef6b6b;
     --warn: #e0a83a;
     --ok: #5cbf73;
@@ -84,8 +84,8 @@
     --hl-atom: #f28b74;
     --hl-operator: #9aa1ac;
     --hl-comment: #6b7380;
-    --hl-active: rgba(247, 167, 64, 0.08);
-    --hl-selection: rgba(247, 167, 64, 0.3);
+    --hl-active: rgba(254, 175, 58, 0.08);
+    --hl-selection: rgba(254, 175, 58, 0.3);
   }
 }
 
@@ -186,6 +186,7 @@ input[type=search], input.text {
 .themes { display: flex; gap: 8px; }
 .themes button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 6px; font-size: 12px; color: var(--fg-soft); }
 .themes button svg { width: 22px; height: 22px; }
+.themes .swatch { width: 22px; height: 22px; border-radius: 5px; }
 .themes button.active { border-color: var(--accent); color: var(--fg); box-shadow: 0 0 0 1px var(--accent) inset; }
 /* the editor fills the width of the panel, right below its header */
 .cm-host {
@@ -294,18 +295,17 @@ input[type=search], input.text {
 /* ----- text interface: questions in plain language ---------------------------------- */
 
 .chat { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; }
-/* the top bar keeps the answers that scroll under it out of sight, fading out downwards */
-.chat::before {
-  content: ""; position: absolute; top: 0; left: 0; right: 12px; height: 60px; z-index: 1; pointer-events: none;
-  background: linear-gradient(var(--bg) 70%, transparent);
-}
-/* the logo in the top left corner after the first question (fading in), not a control */
+/* the top bar in two parts, the logo (left) and the controls (right): the answers scroll under
+   them, and in between; their inner lower corners are rounded like the maps */
+.chat-brand, .chat-top { position: absolute; top: 0; z-index: 1; background: var(--bg); height: 50px; box-sizing: border-box; }
+/* the logo after the first question (fading in), not a control */
 .chat-brand {
-  position: absolute; top: 8px; left: 14px; height: 34px; width: auto; z-index: 1; pointer-events: none; user-select: none;
+  left: 0; padding: 8px 14px; border-bottom-right-radius: 10px; pointer-events: none; user-select: none;
   opacity: 0; transition: opacity 0.6s ease;
 }
+.chat-brand img { height: 34px; width: auto; display: block; }
 .chat-brand.shown { opacity: 1; }
-.chat-top { position: absolute; top: 12px; right: 14px; display: flex; align-items: center; gap: 4px; z-index: 1; color: var(--fg-soft); }
+.chat-top { right: 12px; padding: 0 2px 0 10px; border-bottom-left-radius: 10px; display: flex; align-items: center; gap: 4px; color: var(--fg-soft); }
 .chat-top .sep { margin: 0 4px; opacity: 0.6; user-select: none; }
 .chat-top button.word { border: none; background: none; padding: 2px 4px; font-size: 12px; color: var(--fg-soft); }
 .chat-top button.word:hover:not(:disabled) { color: var(--fg); }
@@ -313,8 +313,23 @@ input[type=search], input.text {
 .chat-top button.icon, .chat-top button.icon:hover { background: none; border-color: transparent; }
 .chat-top button.icon:hover { color: var(--fg); }
 .chat-top button.icon.active { color: var(--fg); }
-/* room below the last answer: it can move up to the top of the view, well above the field */
-.chat .turns { position: relative; flex: 1; overflow: auto; padding: 56px 16px max(36px, calc(100vh - 260px)); }
+/* a choice: only the chosen one, the others under the mouse or after a tap on it */
+.pick { display: flex; align-items: center; gap: 4px; }
+.pick .glyph { display: contents; }
+.pick .swatch { display: block; width: 16px; height: 16px; border-radius: 4px; }
+@media (hover: hover) { .pick:not(:hover):not(.open) button:not(.active) { display: none; } }
+@media (hover: none) { .pick:not(.open) button:not(.active) { display: none; } }
+/* about knut over the text interface, the page dimmed and blurred behind it */
+.about-overlay {
+  position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(0, 0, 0, 0.35); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+}
+.about-box {
+  width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; box-sizing: border-box; padding: 4px 26px 20px;
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow, 0 6px 24px rgba(0, 0, 0, 0.2));
+}
+/* the answers scroll under the top bar and the field; the last one stays a little above the field */
+.chat .turns { position: relative; isolation: isolate; flex: 1; overflow: auto; padding: 56px 16px 164px; scrollbar-gutter: stable both-edges; }
 .chat .turn { max-width: 760px; margin: 0 auto 22px; }
 /* copy symbols: next to the question (right) and the answer (left), shown under the mouse */
 .chat .question-row, .chat .answer-row { position: relative; }
@@ -337,6 +352,18 @@ input[type=search], input.text {
 .chat .question-row:hover .copy, .chat .answer-row:hover .copy, .chat button.copy:focus-visible { opacity: 1; }
 /* narrow windows: room at the sides for the symbols */
 @media (max-width: 860px) { .chat .turn { padding: 0 34px 0 34px; } .chat .question-row { margin-right: 26px; } }
+/* phones: the full width; the question's symbols move to its left, the answer's copy symbol is left out */
+@media (max-width: 600px) {
+  .chat .turns { padding-left: 10px; padding-right: 10px; }
+  .chat .turn { padding: 0; }
+  .chat .question-row { margin-right: 0; }
+  .chat .question-row .q-tools { left: auto; right: 100%; margin: 0 6px 0 0; }
+  .chat .question-row::after { left: auto; right: 100%; }
+  .chat .answer-row .copy, .chat .answer-row::before { display: none; }
+  .chat .chat-input { width: calc(100% - 20px); }
+}
+/* without a mouse, the symbols are always there, faintly */
+@media (hover: none) { .chat .question-row .copy { opacity: 0.6; } }
 /* a question being edited */
 .chat .question-edit { margin-left: auto; width: min(100%, 560px); display: flex; flex-direction: column; gap: 6px; }
 .chat .question-edit textarea {
@@ -369,11 +396,12 @@ input[type=search], input.text {
 .chat .answer-map { position: relative; height: 340px; margin: 4px 0 8px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
 .chat .answer-map .map { position: absolute; inset: 0; }
 /* after a reload: the map darkened, the way to its content in the middle */
+/* (dimmed and lettered like the map's own hint "Use … to zoom the map") */
 .chat .answer-map .regenerate {
-  position: absolute; inset: 0; z-index: 2; border: none; border-radius: 0; background: rgba(0, 0, 0, 0.55);
-  color: #fff; font-size: 15px; cursor: pointer; transition: background 0.2s ease;
+  position: absolute; inset: 0; z-index: 2; border: none; border-radius: 0; background: rgba(0, 0, 0, 0.4);
+  color: #fff; font: inherit; font-size: 1.4em; line-height: 1.2; padding: 1rem; cursor: pointer; transition: background 0.2s ease;
 }
-.chat .answer-map .regenerate:hover { background: rgba(0, 0, 0, 0.45); }
+.chat .answer-map .regenerate:hover { background: rgba(0, 0, 0, 0.32); }
 .chat .answer-map .regenerate:disabled { cursor: progress; opacity: 1; }
 /* its controls at its own edges (not beside the panels like the big map) */
 .chat .answer-map .maplibregl-ctrl-bottom-right, .chat .answer-map .maplibregl-ctrl-top-right { right: 0; }
@@ -397,6 +425,10 @@ input[type=search], input.text {
 .cross-enter-active, .cross-leave-active { transition: opacity 0.35s ease; }
 .cross-enter-from, .cross-leave-to { opacity: 0; }
 .fade-enter-from { opacity: 0; }
+/* the field and the note below it lie over the answers: they scroll beside the field's rounded
+   upper corners, and are hidden from its middle downwards */
+.chat:not(.start) .chat-foot { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; padding-top: 1px; }
+.chat:not(.start) .chat-foot::before { content: ""; position: absolute; inset: 24px 0 0; background: var(--bg); z-index: -1; }
 /* one field: the text, and the button as its right end */
 .chat-input {
   max-width: 760px; width: calc(100% - 32px); margin: 0 auto 18px; display: flex; align-items: stretch;
@@ -410,11 +442,17 @@ input[type=search], input.text {
 }
 .chat-input textarea:focus { outline: none; }
 .chat-input button { border: none; border-radius: 0; min-height: 44px; padding: 0 20px; }
-.chat-input button.primary:disabled { opacity: 1; background: var(--bg-soft); color: var(--fg-soft); }
+/* the button comes in from the right once there is something to ask */
+.chat-input button.ask {
+  max-width: 90px; overflow: hidden; white-space: nowrap; text-align: left;
+  transition: max-width 0.12s ease-out, padding 0.12s ease-out;
+}
+.chat-input button.ask.empty { max-width: 0; padding: 0; opacity: 1; }
 /* before the first question: the field in the middle, like a search page */
 .chat.start { justify-content: center; }
 .chat.start .turns { flex: 0 0 auto; overflow: visible; padding: 0 16px 18px; display: flex; justify-content: center; }
-.chat-logo { width: min(220px, 60%); height: auto; }
+.chat-logo { width: min(220px, 60%); line-height: 0; }
+.chat-logo svg { width: 100%; height: auto; }
 .chat.start .chat-input { margin-bottom: 18vh; }
 /* the note right below the field (the field then keeps less room below it) */
-.chat-disclaimer { margin: -12px auto 10px; font-size: 11px; color: var(--fg-soft); text-align: center; }
+.chat-disclaimer { margin: -12px auto 4px; font-size: 11px; color: var(--fg-soft); opacity: 0.65; text-align: center; }
