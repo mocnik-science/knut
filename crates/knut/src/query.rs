@@ -168,7 +168,7 @@ impl<'a> Compiled<'a> {
         self.f.key.is_some() || self.f.uid.is_some() || self.f.changeset.is_some()
     }
 
-    fn tags_ok(&self, tags: &Tags) -> bool {
+    fn tags_ok<K: AsRef<str>, V: AsRef<str>>(&self, tags: &[(K, V)]) -> bool {
         let Some(k) = &self.f.key else { return true };
         match tags.iter().find(|(kk, _)| kk.as_ref() == k.as_str()) {
             None => false,
@@ -446,7 +446,7 @@ impl Reader {
                     return Ok(out);
                 }
                 let set: std::collections::HashSet<i64> = want.iter().copied().collect();
-                let tags = |_: &Tags| true;
+                let tags = |_: &[(&str, &str)]| true;
                 let keep = |d: &knut_format::block::DirEntry, _: &[Meta], _: &[bool]| set.contains(&d.id);
                 let b = self.block_filtered(*no, &knut_format::block::SegFilter { tags: &tags, keep: &keep })?;
                 for &id in want {
@@ -589,7 +589,7 @@ impl Reader {
             .par_iter()
             .map(|&(no, t)| {
                 let wanted = |id: i64| ids.binary_search(&(t, id)).is_ok();
-                let tags = |_: &Tags| true;
+                let tags = |_: &[(&str, &str)]| true;
                 let keep = |d: &knut_format::block::DirEntry, _: &[Meta], _: &[bool]| wanted(d.id);
                 let b = self.block_attrs(no, &knut_format::block::SegFilter { tags: &tags, keep: &keep })?;
                 let mut out = Vec::new();
@@ -654,7 +654,7 @@ impl Reader {
                     // Segment time intervals are not exact without geometry, so the newest
                     // version <= ts over all segments of an object wins (multi-segment
                     // objects also contribute non-matching candidates).
-                    let tags = |t: &Tags| c.tags_ok(t);
+                    let tags = |t: &[(&str, &str)]| c.tags_ok(t);
                     let keep = |d: &knut_format::block::DirEntry, v: &[Meta], ok: &[bool]| {
                         v.iter().zip(ok).rev().find(|(m, _)| m.timestamp <= ts).is_some_and(|(m, ok)| {
                             (m.visible && c.attr_ok(m, *ok)) || d.flags & SEG_MULTI != 0
@@ -680,7 +680,7 @@ impl Reader {
                 }
                 let hit = |d: &SegDir| d.valid_at(rt) && (d.bbox.intersects(bbox));
                 let b = if c.selective() && !want_private {
-                    let tags = |t: &Tags| c.tags_ok(t);
+                    let tags = |t: &[(&str, &str)]| c.tags_ok(t);
                     // keep segments whose version at `ts` is visible and matches
                     let keep = |_: &knut_format::block::DirEntry, v: &[Meta], ok: &[bool]| {
                         v.iter().zip(ok).rev().find(|(m, _)| m.timestamp <= ts).is_some_and(|(m, ok)| m.visible && c.attr_ok(m, *ok))
@@ -822,7 +822,7 @@ impl Reader {
                 let inside = !filter.geometry && !want_private && contains(bbox, &self.block_header(no)?.bbox);
                 let hit = |d: &SegDir| inside || (d.overlaps(r0, r1) && d.bbox.intersects(bbox));
                 let b = if inside {
-                    let tags = |t: &Tags| c.tags_ok(t);
+                    let tags = |t: &[(&str, &str)]| c.tags_ok(t);
                     let keep = |_: &knut_format::block::DirEntry, v: &[Meta], ok: &[bool]| {
                         v.iter().zip(ok).any(|(m, ok)| {
                             !m.continuation && m.timestamp >= t0 && m.timestamp <= t1 && c.attr_ok(m, *ok)
@@ -830,7 +830,7 @@ impl Reader {
                     };
                     self.block_attrs(no, &knut_format::block::SegFilter { tags: &tags, keep: &keep })?
                 } else if c.selective() && !want_private {
-                    let tags = |t: &Tags| c.tags_ok(t);
+                    let tags = |t: &[(&str, &str)]| c.tags_ok(t);
                     let keep = |_: &knut_format::block::DirEntry, v: &[Meta], ok: &[bool]| {
                         v.iter().zip(ok).any(|(m, ok)| {
                             !m.continuation && m.timestamp >= t0 && m.timestamp <= t1 && c.attr_ok(m, *ok)

@@ -729,7 +729,14 @@ fn resolve(r: u64, global: &[Str], local: &[Str]) -> Result<Str> {
 
 struct Common {
     local: Vec<Str>,
-    tagsets: Vec<Tags>,
+    /// Tagsets as references into the dictionaries (`ts_off` per tagset); the tags are
+    /// built on first use (`tagsets`), with the global strings copied once per block (so
+    /// that threads decoding different blocks never contend on their reference counts).
+    ts_refs: Vec<(u64, u64)>,
+    ts_off: Vec<u32>,
+    tagsets: Vec<Option<Tags>>,
+    kcache: HashMap<u64, Str>,
+    vcache: HashMap<u64, Str>,
     /// (changeset, uid, base timestamp)
     cs_table: Vec<(u64, u32, i64)>,
     ver: Col,
@@ -746,9 +753,36 @@ impl Common {
         Ok((cs, uid, base.wrapping_add(ts_off as i64)))
     }
 
-    fn meta(&mut self, prev_ver: &mut i64) -> Result<(Meta, Tags)> {
+    fn meta(&mut self, prev_ver: &mut i64, dicts: &DecodeDicts) -> Result<(Meta, Tags)> {
         let (m, ti) = self.meta_ti(prev_ver)?;
-        Ok((m, self.tagsets[ti].clone()))
+        Ok((m, self.tags(ti, dicts)?))
+    }
+
+    /// The tags of tagset `ti` (built on first use).
+    fn tags(&mut self, ti: usize, dicts: &DecodeDicts) -> Result<Tags> {
+        if let Some(t) = &self.tagsets[ti] {
+            return Ok(t.clone());
+        }
+        let copy = |r: u64, global: &[Str], local: &[Str], cache: &mut HashMap<u64, Str>| -> Result<Str> {
+            if r & 1 == 1 {
+                return resolve(r, global, local);
+            }
+            if let Some(s) = cache.get(&r) {
+                return Ok(s.clone());
+            }
+            let s = Str::from(&*resolve(r, global, local)?);
+            cache.insert(r, s.clone());
+            Ok(s)
+        };
+        let (a, b) = (self.ts_off[ti] as usize, self.ts_off[ti + 1] as usize);
+        let mut t = Vec::with_capacity(b - a);
+        for i in a..b {
+            let (k, v) = self.ts_refs[i];
+            t.push((copy(k, &dicts.keys, &self.local, &mut self.kcache)?, copy(v, &dicts.values, &self.local, &mut self.vcache)?));
+        }
+        let t = Tags::from(t);
+        self.tagsets[ti] = Some(t.clone());
+        Ok(t)
     }
 
     fn meta_ti(&mut self, prev_ver: &mut i64) -> Result<(Meta, usize)> {
@@ -919,8 +953,9 @@ pub fn decode_data(
 /// Segment filter applied while decoding: non-matching node and way segments are skipped
 /// without materializing slots, coordinates or node lists.
 pub struct SegFilter<'a> {
-    /// Evaluated once per tagset of the block.
-    pub tags: &'a (dyn Fn(&Tags) -> bool + Sync),
+    /// Evaluated once per tagset of the block, on the strings of the dictionaries (no
+    /// tagset needs to be built for it).
+    pub tags: &'a (dyn Fn(&[(&str, &str)]) -> bool + Sync),
     /// Decides per segment given its versions and the tag result of each version.
     pub keep: &'a (dyn Fn(&DirEntry, &[Meta], &[bool]) -> bool + Sync),
 }
@@ -987,34 +1022,21 @@ pub fn decode_data_filtered(
     let ts_lens = get_u64_column_budget(data, &mut p, &mut budget)?;
     let mut ts_keys = Col::read_budget(data, &mut p, "tag keys", &mut budget)?;
     let mut ts_vals = Col::read_budget(data, &mut p, "tag values", &mut budget)?;
-    let mut tagsets = Vec::with_capacity(ts_lens.len());
-    // Global strings are copied once per block so that threads decoding different blocks
-    // never contend on the same reference counts.
-    let mut kcache: HashMap<u64, Str> = HashMap::default();
-    let mut vcache: HashMap<u64, Str> = HashMap::default();
-    let cached = |r: u64, global: &[Str], cache: &mut HashMap<u64, Str>| -> Result<Str> {
-        if r & 1 == 1 {
-            return resolve(r, global, &local);
-        }
-        if let Some(s) = cache.get(&r) {
-            return Ok(s.clone());
-        }
-        let s = Str::from(&*resolve(r, global, &local)?);
-        cache.insert(r, s.clone());
-        Ok(s)
-    };
+    // the tagsets as references into the dictionaries; their strings are built only for
+    // the segments that are kept (building all of them was most of the work otherwise)
+    let mut ts_refs: Vec<(u64, u64)> = Vec::with_capacity(ts_keys.remaining());
+    let mut ts_off: Vec<u32> = Vec::with_capacity(ts_lens.len() + 1);
+    ts_off.push(0);
     for l in ts_lens {
         if l as usize > ts_keys.remaining() {
             return Err(corrupt("tagset length"));
         }
-        let mut t = Vec::with_capacity(l as usize);
         for _ in 0..l {
-            let k = cached(ts_keys.next()?, &dicts.keys, &mut kcache)?;
-            let v = cached(ts_vals.next()?, &dicts.values, &mut vcache)?;
-            t.push((k, v));
+            ts_refs.push((ts_keys.next()?, ts_vals.next()?));
         }
-        tagsets.push(Tags::from(t));
+        ts_off.push(ts_refs.len() as u32);
     }
+    let n_tagsets = ts_off.len() - 1;
     let mut cs_cs = Col::read_budget(data, &mut p, "cs table cs", &mut budget)?;
     let mut cs_uid = Col::read_budget(data, &mut p, "cs table uid", &mut budget)?;
     let mut cs_ts = Col::read_budget(data, &mut p, "cs table ts", &mut budget)?;
@@ -1028,7 +1050,11 @@ pub fn decode_data_filtered(
     }
     let mut c = Common {
         local,
-        tagsets,
+        ts_refs,
+        ts_off,
+        tagsets: vec![None; n_tagsets],
+        kcache: HashMap::default(),
+        vcache: HashMap::default(),
         cs_table,
         ver: Col::read_budget(data, &mut p, "version", &mut budget)?,
         ts: Col::read_budget(data, &mut p, "timestamp", &mut budget)?,
@@ -1042,7 +1068,23 @@ pub fn decode_data_filtered(
         return Err(corrupt("version count mismatch"));
     }
     let tag_ok: Vec<bool> = match filter {
-        Some(f) => c.tagsets.iter().map(|t| (f.tags)(t)).collect(),
+        Some(f) => {
+            fn text<'a>(r: u64, global: &'a [Str], local: &'a [Str]) -> Result<&'a str> {
+                let id = (r >> 1) as usize;
+                let tbl = if r & 1 == 0 { global } else { local };
+                tbl.get(id).map(|s| &**s).ok_or_else(|| corrupt("string reference out of range"))
+            }
+            let mut buf: Vec<(&str, &str)> = Vec::new();
+            let mut ok = Vec::with_capacity(n_tagsets);
+            for ti in 0..n_tagsets {
+                buf.clear();
+                for &(k, v) in &c.ts_refs[c.ts_off[ti] as usize..c.ts_off[ti + 1] as usize] {
+                    buf.push((text(k, &dicts.keys, &c.local)?, text(v, &dicts.values, &c.local)?));
+                }
+                ok.push((f.tags)(&buf));
+            }
+            ok
+        }
         None => Vec::new(),
     };
     let (mut mbuf, mut obuf): (Vec<Meta>, Vec<bool>) = (Vec::new(), Vec::new());
@@ -1093,7 +1135,7 @@ pub fn decode_data_filtered(
                         y = i32::try_from(plat).map_err(|_| corrupt("lat range"))?;
                     }
                     if keep {
-                        vs.push(NodeVersion { meta, tags: c.tagsets[ti].clone(), lon: x, lat: y });
+                        vs.push(NodeVersion { meta, tags: c.tags(ti, dicts)?, lon: x, lat: y });
                     }
                 }
                 if keep {
@@ -1127,10 +1169,10 @@ pub fn decode_data_filtered(
                 let metas = metas;
                 if attr_only {
                     if decide(d, &metas) {
-                        let versions = metas
-                            .into_iter()
-                            .map(|(meta, ti)| WayVersion { meta, tags: c.tagsets[ti].clone(), nodes: Vec::new() })
-                            .collect();
+                        let mut versions = Vec::with_capacity(metas.len());
+                        for (meta, ti) in metas {
+                            versions.push(WayVersion { meta, tags: c.tags(ti, dicts)?, nodes: Vec::new() });
+                        }
                         out.push(seg(d, SegmentBody::Way { slots: Vec::new(), versions }, opt.time_base, true)?);
                         out_idx.push(di as u32);
                     }
@@ -1216,7 +1258,7 @@ pub fn decode_data_filtered(
                 let mut versions: Vec<WayVersion> = Vec::with_capacity(d.n_versions as usize);
                 let n_slots = d.n_slots as u64;
                 for (meta, ti) in metas {
-                    let tags = c.tagsets[ti].clone();
+                    let tags = c.tags(ti, dicts)?;
                     let prev = versions.last().map(|v| &v.nodes);
                     let nodes = decode_list(nl_kind, nl_nums, prev, |last| {
                         let base = last.map_or(-1, |&v| v as i64);
@@ -1257,7 +1299,7 @@ pub fn decode_data_filtered(
                 let mut pv = 0i64;
                 let mut prev_len: Option<usize> = None;
                 for _ in 0..d.n_versions {
-                    let (meta, tags) = c.meta(&mut pv)?;
+                    let (meta, tags) = c.meta(&mut pv, dicts)?;
                     let op = match kind.next()? {
                         0 => {
                             let len = nums.next()? as usize;
@@ -1520,7 +1562,7 @@ mod tests {
             let dirs = decode_directory(&raw.dir, raw.n_segments).unwrap();
             let dopt = DecodeOptions { time_base: tb };
             let full = decode_data(ObjType::Way, &dirs, &raw.data, &raw.geom, &ddicts(), &dopt).unwrap();
-            let tagf = |t: &Tags| t.iter().any(|(_, v)| v.as_ref() == "path");
+            let tagf = |t: &[(&str, &str)]| t.iter().any(|(_, v)| *v == "path");
             let keep = |_: &DirEntry, _: &[Meta], ok: &[bool]| ok.iter().any(|x| *x);
             let f = SegFilter { tags: &tagf, keep: &keep };
             let d = decode_data_filtered(ObjType::Way, &dirs, &raw.data, Some(&raw.geom), &ddicts(), &dopt, true, Some(&f)).unwrap();

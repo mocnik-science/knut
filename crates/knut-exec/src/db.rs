@@ -4,7 +4,7 @@
 use crate::geom::{self, BBoxF, Geom, P};
 use crate::value::{Hist, Ver};
 use knut::{Geometry, OpenOptions, Reader};
-use knut_format::{Member, Meta, ObjType, PrivEntry, SegmentBody, Str, Tags, block, rel_time};
+use knut_format::{Member, Meta, ObjType, PrivEntry, SegmentBody, Str, block, rel_time};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use std::path::{Path, PathBuf};
@@ -171,7 +171,7 @@ impl Db {
                     return out;
                 }
                 let set: HashSet<i64> = ids.iter().copied().collect();
-                let tags = |_: &Tags| true;
+                let tags = |_: &[(&str, &str)]| true;
                 let keep = |d: &block::DirEntry, _: &[Meta], _: &[bool]| set.contains(&d.id);
                 let Ok(b) = self.reader.block_filtered(*no, &block::SegFilter { tags: &tags, keep: &keep }) else { return out };
                 for &id in ids {
@@ -228,7 +228,7 @@ impl Db {
             .map(|(no, ids)| {
                 let mut out = Vec::new();
                 let set: HashSet<i64> = ids.iter().copied().collect();
-                let tags = |_: &Tags| true;
+                let tags = |_: &[(&str, &str)]| true;
                 let keep = |d: &block::DirEntry, _: &[Meta], _: &[bool]| set.contains(&d.id);
                 let Ok(b) = self.reader.block_filtered(*no, &block::SegFilter { tags: &tags, keep: &keep }) else { return out };
                 for &id in ids {

@@ -1429,11 +1429,9 @@ pub fn match_sequence(ctx: &Ctx, q: &Query, seq: &Seq, h: &Arc<Hist>, f: &mut dy
                 continue;
             }
         }
-        // `X:k != Y:k2` is false when a tag is missing or both are the same text
-        if seq.differ.iter().any(|(i, ki, j, kj)| match (win[*i].tag(ki), win[*j].tag(kj)) {
-            (Some(a), Some(b)) => a == b,
-            _ => true,
-        }) {
+        // `X:k != Y:k2` is false when both are the same text (a missing tag is left to the
+        // evaluation, which reports comparisons with missing values)
+        if seq.differ.iter().any(|(i, ki, j, kj)| matches!((win[*i].tag(ki), win[*j].tag(kj)), (Some(a), Some(b)) if a == b)) {
             continue;
         }
         let items: Vec<Arc<Elem>> = win

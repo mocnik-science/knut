@@ -37,8 +37,8 @@ pub struct Seq {
     pub max_dt: Option<(f64, bool)>,
     pub names: Arc<[String]>,
     /// Conditions `X:k != Y:k2` among the conditions (positions and keys): a window is
-    /// skipped before its elements are built when a tag is missing or both are the same
-    /// text (`!=` is then false).
+    /// skipped before its elements are built when both tags are the same text (`!=` is
+    /// then false).
     pub differ: Vec<(usize, String, usize, String)>,
     /// The conditions use the pattern variables only for tags and plain fields (no
     /// geometry, node lists or other versions).

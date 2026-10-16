@@ -370,7 +370,7 @@ fn block_cands(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) -> 
     let needs_nodes = ot == ObjType::Way && (spec.kinds.area || spec.kinds.any);
     let attr = !spec.need_geom && cover == Cover::Inside && !private && !needs_nodes && (!history || spec.attrs_history) && ot != ObjType::Relation;
     let pred = &spec.pred;
-    let tags = |t: &Tags| pred.eval(t);
+    let tags = |t: &[(&str, &str)]| pred.eval(t);
     let time = spec.time.clone();
     let keep = move |d: &block::DirEntry, v: &[Meta], ok: &[bool]| -> bool {
         if attr && d.flags & SEG_MULTI != 0 && !matches!(time, TimeMode::Events(..)) {
