@@ -300,6 +300,7 @@ impl Ctx {
             ExprKind::Underscore => self.lookup(sc, "_").or_else(|| self.implicit(sc)).ok_or_else(|| RtErr::internal(e.span, "\"_\" has no value here")),
             ExprKind::List(xs) => Ok(Value::List(Arc::new(xs.iter().map(|x| self.eval(x, sc)).collect::<R<Vec<_>>>()?))),
             ExprKind::BoxLit(b) => Ok(Value::Region(Arc::new(Region::Box(geom::BBoxF { minx: b[0], maxx: b[1], miny: b[2], maxy: b[3] })))),
+            ExprKind::Point([lon, lat]) => Ok(Value::Region(Arc::new(Region::from_geom(Arc::new(geom::Geom::Point((*lon, *lat))), self.text(e.span).to_string())))),
             ExprKind::Unit(inner, u, _) => match &inner.kind {
                 ExprKind::Num(x) => Ok(Value::Num(Num::with_unit(*x, u))),
                 _ => {

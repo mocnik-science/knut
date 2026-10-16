@@ -646,7 +646,7 @@ impl<'a> Checker<'a> {
                 }
                 Ty::List(Box::new(t))
             }
-            ExprKind::BoxLit(_) => Ty::Region,
+            ExprKind::BoxLit(_) | ExprKind::Point(_) => Ty::Region,
             ExprKind::Unit(inner, u, us) => {
                 let word = self.text(*us).to_string();
                 self.unit_words.push((word, *us));
@@ -836,6 +836,7 @@ impl<'a> Checker<'a> {
             Ty::Region => match f {
                 "area" => Ty::Num(Dim::AREA),
                 "length" => Ty::Num(Dim::LENGTH),
+                "lon" | "lat" => Ty::Num(Dim::NONE),
                 _ => Ty::Any,
             },
             _ => Ty::Any,
@@ -1457,7 +1458,7 @@ impl<'a> Checker<'a> {
                 Ty::Elem(k) => Ty::Elem(k),
                 _ => Ty::Elem(None),
             },
-            OfFunc::Nearest => set_ty.elem(),
+            OfFunc::Nearest | OfFunc::First | OfFunc::Last => set_ty.elem(),
             OfFunc::Graph => Ty::Net,
         }
     }
@@ -1522,7 +1523,45 @@ impl<'a> Checker<'a> {
                 // predictions, accuracy, trained on
                 Ty::Record
             }
+            Special::Geocode { one, query } => {
+                let t = self.infer(query);
+                if !matches!(t, Ty::Text | Ty::TagText | Ty::Any) {
+                    let (what, wde) = (t.describe(false), t.describe(true));
+                    self.diags.push(
+                        Diagnostic::error(
+                            "E108",
+                            query.span,
+                            Text2::new(format!("\"geocode\" needs an address as text, but this is {what}."), format!("\"geocode\" braucht eine Adresse als Text, das hier ist aber {wde}.")),
+                        )
+                        .sugg("geocode 'Am Wall 201, Bremen'"),
+                    );
+                }
+                self.geocoding(query.span);
+                if *one { Ty::Elem(None) } else { Ty::List(Box::new(Ty::Elem(None))) }
+            }
+            Special::ReverseGeocode { one, at } => {
+                let t = self.infer(at);
+                if !matches!(t, Ty::Elem(_) | Ty::Region | Ty::Any | Ty::None) {
+                    let (what, wde) = (t.describe(false), t.describe(true));
+                    self.diags.push(
+                        Diagnostic::error(
+                            "E108",
+                            at.span,
+                            Text2::new(format!("\"reverse-geocode\" needs a point or an element, but this is {what}."), format!("\"reverse-geocode\" braucht einen Punkt oder ein Element, das hier ist aber {wde}.")),
+                        )
+                        .sugg("reverse-geocode 8.8079E, 53.0758N"),
+                    );
+                }
+                self.geocoding(at.span);
+                if *one { Ty::Elem(None) } else { Ty::List(Box::new(Ty::Elem(None))) }
+            }
         }
+    }
+
+    /// Geocoding needs the database (without the address index it scans it, with a notice
+    /// while running).
+    fn geocoding(&mut self, _span: Span) {
+        self.needs_db = true;
     }
 
     // ----- warnings --------------------------------------------------------------------

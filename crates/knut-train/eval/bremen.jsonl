@@ -1,0 +1,51 @@
+// Questions written by hand for bremen.knutdb, phrased unlike the templates. `reference` is a
+// query with the expected results (the model's query must give each of its results); `ask`:
+// the model should ask back.
+{"question": "Wie viele Bäckereien gibt es in Bremen?", "reference": "count of * x with x:shop=bakery within Bremen"}
+{"question": "Zeige mir alle Spielplätze in Vegesack", "reference": "* x with x:leisure=playground within Vegesack"}
+{"question": "Wie lange brauche ich zu Fuß vom Hauptbahnhof zur Universität?", "reference": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nu = pick * x with x:amenity=university and x:name='Universität Bremen'\np = path P from s to u by foot\np.duration"}
+{"question": "Wie hat sich die Zahl der Bänke seit 2015 entwickelt?", "reference": "count of nodes n with n:amenity=bench on each year from 2015 to 2026"}
+{"question": "How many benches are there in Vegesack?", "reference": "count of nodes n with n:amenity=bench within Vegesack"}
+{"question": "Wie viele Apotheken gibt es in Schwachhausen?", "reference": "count of * x with x:amenity=pharmacy within Schwachhausen"}
+{"question": "Welche Supermärkte erreiche ich in 10 Minuten zu Fuß vom Hauptbahnhof?", "reference": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nreach = isochrone I from s closer than 10 min by foot\n* x with x:shop=supermarket within reach"}
+{"question": "Wie viele Bushaltestellen gibt es in Findorff?", "reference": "count of nodes n with n:highway=bus_stop within Findorff"}
+{"question": "Gibt es in Bremen mehr Cafés oder mehr Kneipen?", "reference": "count of * x with x:amenity=cafe within Bremen, count of * x with x:amenity=pub within Bremen"}
+{"question": "Wie lang ist das Radwegenetz in Bremen?", "reference": "sum of (ways w with w:highway=cycleway within Bremen).map(w => w.length)"}
+{"question": "Which are the three largest parks in Bremen?", "reference": "pick 3 areas a with a:leisure=park within Bremen ordered by -a.area"}
+{"question": "How many restaurants in Bremen are wheelchair accessible?", "reference": "count of * x with x:amenity=restaurant and x:wheelchair=yes within Bremen"}
+{"question": "Wie viele Kinos gibt es?", "reference": "count of * x with x:amenity=cinema"}
+{"question": "Wie viele Ladestationen für E-Autos gab es Anfang 2020?", "reference": "count of * x with x:amenity=charging_station on 2020-01-01"}
+{"question": "Wie komme ich zum Bahnhof?", "ask": true}
+{"question": "How long does it take from Bremen Hauptbahnhof to the nearest pharmacy?", "ask": true}
+{"question": "Wie viele Bäume stehen in der Östlichen Vorstadt?", "reference": "count of nodes n with n:natural=tree within 'Östliche Vorstadt'"}
+{"question": "Wie viele Briefkästen gibt es in Horn-Lehe?", "reference": "count of nodes n with n:amenity=post_box within 'Horn-Lehe'"}
+{"question": "How many schools are there in each district of Bremen?", "reference": "count of * x with x:amenity=school within Bremen per (areas d with d:boundary=administrative and d:admin_level='10')"}
+{"question": "Wie viele Gebäude haben mehr als 5 Stockwerke?", "reference": "count of areas a with a:building and (a:building:levels ?? 0) > 5"}
+{"question": "How many ice cream parlours can I reach within 15 minutes by bike from Bremen Hauptbahnhof?", "reference": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nreach = isochrone I from s closer than 15 min by bicycle\ncount of * x with x:amenity=ice_cream within reach"}
+{"question": "Welcher Anteil der Bänke hat eine Rückenlehne?", "reference": "share of (nodes n with n:amenity=bench) with n:backrest=yes"}
+{"question": "Wie viele Spielplätze gibt es in Gröpelingen?", "reference": "count of * x with x:leisure=playground within 'Gröpelingen'"}
+{"question": "Zeig mir die Feuerwachen in Bremen", "reference": "* x with x:amenity=fire_station within Bremen"}
+{"question": "Wie viele Kioske gibt es in der Neustadt?", "reference": "count of * x with x:shop=kiosk within Neustadt"}
+{"question": "Wie viele Hotels gab es Anfang 2015 und wie viele heute?", "reference": "count of * x with x:tourism=hotel on 2015-01-01, count of * x with x:tourism=hotel"}
+{"question": "How many new benches were mapped in 2024?", "reference": "count of nodes n with n:amenity=bench and n.version == 1 from 2024 to 2024"}
+{"question": "Welche Küchen haben die Restaurants in Findorff?", "reference": "count of * x with x:amenity=restaurant and x:cuisine within Findorff per x:cuisine"}
+{"question": "Mit dem Rad vom Hauptbahnhof zur Universität Bremen – wie lange dauert das?", "reference": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nu = pick * x with x:amenity=university and x:name='Universität Bremen'\np = path P from s to u by bicycle\np.duration"}
+{"question": "Wie viele Bänke stehen weniger als 50 m von einem Spielplatz entfernt?", "reference": "playgrounds = * y with y:leisure=playground\ncount of nodes n with n:amenity=bench and n near some _ in playgrounds closer than 50 m"}
+{"question": "How many waste baskets are there in Bremen?", "reference": "count of nodes n with n:amenity=waste_basket within Bremen"}
+{"question": "Wie viele Zahnärzte gibt es in Walle?", "reference": "count of * x with x:amenity=dentist within Walle"}
+{"question": "wie viele supermärkte in findorff", "reference": "count of * x with x:shop=supermarket within Findorff"}
+{"turns": [{"role": "user", "content": "Wie viele Bäckereien gibt es in Findorff?"}, {"role": "assistant", "content": "QUERY:\ncount of * x with x:shop=bakery within Findorff"}], "question": "Und in Walle?", "reference": "count of * x with x:shop=bakery within Walle"}
+{"question": "Show me all libraries", "reference": "* x with x:amenity=library"}
+{"question": "Wie viele Straßen haben Tempo 30?", "reference": "count of ways w with w:highway and w:maxspeed == '30'"}
+{"question": "Wie viele Ampeln gibt es in Bremen?", "reference": "count of nodes n with n:highway=traffic_signals within Bremen"}
+{"question": "Wer hat in Bremen die meisten Bänke eingetragen?", "reference": "distribution of (nodes n with n:amenity=bench within Bremen).map(n => n.creator)"}
+{"question": "Was erreiche ich in 20 Minuten?", "ask": true}
+{"question": "Wie viele Bäckereien erreiche ich in 5 Minuten vom Hauptbahnhof?", "ask": true}
+{"question": "Wo ist Am Wall 201 in Bremen?", "reference": "geocoded 'Am Wall 201, Bremen'"}
+{"question": "Wie lange gehe ich von Am Wall 201, Bremen zu Fuß zum Hauptbahnhof?", "reference": "a = geocoded 'Am Wall 201, Bremen'\ns = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\np = path P from a to s by foot\np.duration"}
+{"question": "What is at 53.0758, 8.8079?", "reference": "reverse-geocoded 8.8079E, 53.0758N"}
+{"question": "In welchem Stadtteil liegt die Kunsthalle Bremen?", "reference": "(pick * x with x:name='Kunsthalle Bremen').suburb"}
+{"question": "Welche Postleitzahl hat Am Wall 201, Bremen?", "reference": "(geocoded 'Am Wall 201, Bremen').postcode"}
+{"question": "How many benches are within 300 m of 8.8079E, 53.0758N?", "reference": "count of nodes n with n:amenity=bench and n near some _ in [8.8079E, 53.0758N] closer than 300 m"}
+{"question": "Wie weit ist es mit dem Fahrrad von Am Wall 201, Bremen zur nächsten Apotheke?", "reference": "a = geocoded 'Am Wall 201, Bremen'\ndest = nearest of (* x with x:amenity=pharmacy) to a\np = path P from a to dest by bicycle\np.length"}
+{"question": "Wie viele Kneipen gibt es in jedem Ort?", "reference": "count of * x with x:amenity=pub per x.city"}

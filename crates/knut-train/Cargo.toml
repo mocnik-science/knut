@@ -1,0 +1,15 @@
+[package]
+name = "knut-train"
+description = "Training data and evaluation for the language model of the simple page of knut web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+# a tool for the development of knut-llm, not published
+publish = false
+
+[dependencies]
+knut-exec.workspace = true
+knut-lang.workspace = true
+knut-web.workspace = true
+serde_json.workspace = true

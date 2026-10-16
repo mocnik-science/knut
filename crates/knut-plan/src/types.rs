@@ -116,6 +116,10 @@ pub fn elem_field(kind: Option<Kind>, f: &str) -> Option<Ty> {
                 "roles" => Some(Ty::List(Box::new(Ty::Text))),
                 "versions" => Some(Ty::List(Box::new(Ty::Elem(kind)))),
                 "count" => Some(Ty::Num(D::NONE)),
+                // the address (tags, else the boundaries around it), §5.2b
+                f if ADDRESS_FIELDS.contains(&f) => Some(Ty::Text),
+                "score" => Some(Ty::Num(D::NONE)),
+                "distance" => Some(Ty::Num(D::LENGTH)),
                 _ => None,
             };
             let user_like = if kind.is_none() { user_field(f).or_else(|| changeset_field(f)).or_else(|| note_field(f)).or_else(|| key_field(f)) } else { None };
@@ -178,6 +182,13 @@ fn key_field(f: &str) -> Option<Ty> {
     })
 }
 
+/// Address fields of OSM elements (texts): from the `addr:*` tags, else from the boundaries
+/// around the element (KNUT_LANG.md §5.2b).
+pub const ADDRESS_FIELDS: &[&str] = &[
+    "address", "housenumber", "street", "postcode", "suburb", "district", "city", "county", "state", "state_code", "country",
+    "country_code", "continent",
+];
+
 /// Fields of texts (tag values).
 pub const TEXT_FIELDS: &[&str] = &["length", "number", "exists", "lower", "upper"];
 
@@ -197,7 +208,8 @@ pub fn all_fields(kind: Option<Kind>) -> Vec<&'static str> {
         "lat", "user", "creator", "changeset", "next", "previous", "unchangedBefore", "unchangedAfter", "length", "area",
         "nodes", "members", "roles", "versions", "firstEdit", "lastEdit", "activeSpan", "activeDays", "changesets",
         "edits", "name", "count", "closedAt", "lastTime", "duration", "bbox", "comment", "status", "text", "created",
-        "closed", "comments", "values",
+        "closed", "comments", "values", "address", "housenumber", "street", "postcode", "suburb", "district", "city",
+        "county", "state", "state_code", "country", "country_code", "continent", "score", "distance",
     ];
     ALL.iter().copied().filter(|f| elem_field(kind, f).is_some()).collect()
 }

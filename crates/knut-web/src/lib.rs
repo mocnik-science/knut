@@ -36,6 +36,7 @@ const APP_CSS: &str = include_str!("../assets/app.css");
 const EXAMPLES: &str = include_str!("../assets/examples.json");
 const DOCS: &str = include_str!("../assets/docs.html");
 const LOGO: &str = include_str!("../assets/knut.svg");
+const ICON: &str = include_str!("../assets/icon.svg");
 const ICONS: [(&str, &[u8]); 4] = [
     ("/icon-32.png", include_bytes!("../assets/icon-32.png")),
     ("/icon-180.png", include_bytes!("../assets/icon-180.png")),
@@ -44,7 +45,7 @@ const ICONS: [(&str, &[u8]); 4] = [
 ];
 
 /// Rows per result in the text shown next to the map.
-const TEXT_ROWS: usize = 500;
+pub const TEXT_ROWS: usize = 500;
 /// Features per result drawn on the map.
 const MAX_FEATURES: usize = 100_000;
 
@@ -157,7 +158,7 @@ pub fn serve(opts: WebOptions) -> Result<(), String> {
         dbs: Mutex::new(HashMap::new()),
         jobs: Mutex::new(HashMap::new()),
         next: AtomicU64::new(1),
-        model: llm.map(|url| Arc::new(chat::HttpModel { url, model: opts.llm_model.unwrap_or_else(|| "qwen3:1.7b".into()) }) as Arc<dyn chat::Model>),
+        model: llm.map(|url| Arc::new(chat::HttpModel::new(url, opts.llm_model.unwrap_or_else(|| "qwen3:1.7b".into()))) as Arc<dyn chat::Model>),
     });
     // open the default database now, so that the first run is fast
     if let Some(d) = &state.default_db {
@@ -234,6 +235,7 @@ fn handle(st: &State, mut req: Request) {
         (Method::Get, "/examples.json") => send(req, 200, "application/json; charset=utf-8", EXAMPLES.to_string()),
         (Method::Get, "/docs.html") => send(req, 200, "text/html; charset=utf-8", DOCS.to_string()),
         (Method::Get, "/knut.svg") => send_bytes(req, "image/svg+xml", LOGO.as_bytes()),
+        (Method::Get, "/icon.svg") => send_bytes(req, "image/svg+xml", ICON.as_bytes()),
         (Method::Get, path) if ICONS.iter().any(|i| i.0 == path) => {
             let icon = ICONS.iter().find(|i| i.0 == path).map_or(&[][..], |i| i.1);
             send_bytes(req, "image/png", icon)
@@ -372,7 +374,7 @@ fn start_chat(st: &State, history: Vec<(String, String)>, typed: Option<PathBuf>
     }
     let (db, path) = database_of(st, "", typed);
     let shared_db = path.as_deref().and_then(|p| st.db(p));
-    let system = chat::system_prompt(&database_description(path.as_deref(), shared_db.as_deref()), &question, &examples());
+    let system = chat::instructions(&*model, &chat::database_description(path.as_deref(), shared_db.as_deref()), &question, &examples());
     let base = st.base_dir.clone();
     std::thread::spawn(move || {
         let step = |label: &str| control.begin_step(0, 1, label);
@@ -381,32 +383,32 @@ fn start_chat(st: &State, history: Vec<(String, String)>, typed: Option<PathBuf>
             knut_exec::quick_check(q, &opts).into_iter().filter(|p| p.severity == "error").map(|p| p.text).collect()
         };
         let empty = || Collected { code: 0, messages: String::new(), outputs: Vec::new(), cancelled: false, problems: Vec::new() };
-        let (result, info) = match chat::plan(&*model, &system, &history, &check, &step) {
+        // a run that fails before any output goes back to the model (an unknown place, …)
+        let run = |q: &str| -> Result<Collected, String> {
+            if control.is_cancelled() {
+                return Ok(Collected { cancelled: true, ..empty() });
+            }
+            let opts = Options { db: db.clone(), limit: TEXT_ROWS, timing: false, control: Some(control.clone()), shared_db: shared_db.clone(), ..Default::default() };
+            let r = knut_exec::run_collect(q, Some("query.knut"), &base, &opts, MAX_FEATURES);
+            if r.code != 0 && r.outputs.is_empty() && !r.cancelled { Err(r.messages) } else { Ok(r) }
+        };
+        let (result, info) = match chat::solve(&*model, &system, &history, &check, &run, &step) {
             Err(e) => (empty(), json!({ "error": e })),
-            Ok(p) if p.ask.is_some() => (empty(), json!({ "ask": p.ask })),
-            Ok(p) if !p.problems.is_empty() => (empty(), json!({ "query": p.query, "problems": p.problems, "error": "no valid query could be formed for the question" })),
-            Ok(p) => {
-                let query = p.query.unwrap_or_default();
-                if control.is_cancelled() {
-                    (Collected { cancelled: true, ..empty() }, json!({ "query": query }))
+            Ok(chat::Outcome::Ask(a)) => (empty(), json!({ "ask": a })),
+            Ok(chat::Outcome::Invalid { query, problems }) => (empty(), json!({ "query": query, "problems": problems, "error": "no valid query could be formed for the question" })),
+            Ok(chat::Outcome::Failed { query, error }) => (empty(), json!({ "query": query, "error": error })),
+            Ok(chat::Outcome::Ran { query, result }) => {
+                let info = if result.cancelled {
+                    json!({ "query": query })
                 } else {
-                    step("running the query");
-                    let opts = Options { db, limit: TEXT_ROWS, timing: false, control: Some(control.clone()), shared_db: shared_db.clone(), ..Default::default() };
-                    let result = knut_exec::run_collect(&query, Some("query.knut"), &base, &opts, MAX_FEATURES);
-                    let info = if result.cancelled {
-                        json!({ "query": query })
-                    } else if result.code != 0 && result.outputs.is_empty() {
-                        json!({ "query": query, "error": result.messages })
-                    } else {
-                        control.begin_step(0, 1, "writing the answer");
-                        let outputs: Vec<(String, String)> = result.outputs.iter().map(|o| (o.expr.clone(), o.text.clone())).collect();
-                        match chat::answer(&*model, &question, &query, &chat::results_text(&outputs)) {
-                            Ok(a) => json!({ "query": query, "answer": a }),
-                            Err(e) => json!({ "query": query, "error": e }),
-                        }
-                    };
-                    (result, info)
-                }
+                    control.begin_step(0, 1, "writing the answer");
+                    let outputs: Vec<(String, String)> = result.outputs.iter().map(|o| (o.expr.clone(), o.text.clone())).collect();
+                    match chat::answer(&*model, &question, &query, &chat::results_text(&outputs)) {
+                        Ok(a) => json!({ "query": query, "answer": a }),
+                        Err(e) => json!({ "query": query, "error": e }),
+                    }
+                };
+                (result, info)
             }
         };
         if let Ok(mut c) = job.chat.lock() {
@@ -417,22 +419,6 @@ fn start_chat(st: &State, history: Vec<(String, String)>, typed: Option<PathBuf>
         }
     });
     Ok(id)
-}
-
-/// The database for the model: file, area and time range.
-fn database_description(path: Option<&Path>, db: Option<&Db>) -> String {
-    let Some(db) = db else { return "none (queries must name one with knut_db)".into() };
-    let f = db.focus();
-    let name = path.and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    format!(
-        "{name}, area {:.2}–{:.2}° E, {:.2}–{:.2}° N, data from {} to {}. Places are named with `within NAME` (boundaries in the database).",
-        f.minx,
-        f.maxx,
-        f.miny,
-        f.maxy,
-        knut_lang::dates::format_instant(db.earliest),
-        knut_lang::dates::format_instant(db.latest)
-    )
 }
 
 fn start(st: &State, script: String, typed: Option<PathBuf>) -> u64 {

@@ -280,6 +280,25 @@ pub fn eval(ctx: &Ctx, e: &'static Expr, s: &'static Special, sc: &Sc) -> R<Valu
             }
             Ok(Value::Grouped(Arc::new(Grouped { key_names: vec![unit.name().into()], value_name: "forecast".into(), rows })))
         }
+        Special::Geocode { one, query } => match ctx.eval(query, sc)? {
+            Value::None => Ok(Value::None),
+            q => {
+                let q = match &q {
+                    Value::Text(t) => t.to_string(),
+                    Value::Tag(t) => t.text.to_string(),
+                    other => other.display(),
+                };
+                crate::address::geocode(ctx, &q, *one)
+            }
+        },
+        Special::ReverseGeocode { one, at } => {
+            let a = ctx.eval(at, sc)?;
+            if a.is_none() {
+                return Ok(Value::None);
+            }
+            let p = point(ctx, &a, at.span)?;
+            crate::address::reverse(ctx, p, *one)
+        }
         Special::Classify { set, label, features } => {
             let sv = ctx.eval(set, sc)?;
             let lf = ctx.eval(label, sc)?;
@@ -413,6 +432,13 @@ pub fn non_aggregate(ctx: &Ctx, e: &'static Expr, func: OfFunc, fsp: Span, opera
             }
             let mode = cl.mode.as_ref().map(|m| (m.mode, m.using.as_deref()));
             spatial::nearest(ctx, &set, &origin, mode, sc, e.span)
+        }
+        OfFunc::First | OfFunc::Last => {
+            if v.is_none() {
+                return Ok(Value::None);
+            }
+            let items = ctx.items_of(&v, Hints::default(), e.span)?;
+            Ok(if func == OfFunc::First { items.iter().next().cloned() } else { items.iter().last().cloned() }.unwrap_or(Value::None))
         }
         OfFunc::Graph => {
             let set = ctx.as_set(&v, e.span)?;

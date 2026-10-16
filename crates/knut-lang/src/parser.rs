@@ -14,7 +14,8 @@ pub const KEYWORDS: &[&str] = &[
     "with", "within", "on", "from", "to", "before", "after", "between", "and", "or", "not", "in", "pick", "exactly",
     "randomly", "using", "seed", "the", "all", "some", "no", "nearest", "of", "by", "per", "having", "closer", "than",
     "equal", "near", "overlapping", "next", "previous", "define", "split", "at", "each", "path", "isochrone",
-    "dataset", "graph", "groups", "ordered", "none", "true", "false",
+    "dataset", "graph", "groups", "ordered", "none", "true", "false", "geocode", "geocoded", "reverse-geocode",
+    "reverse-geocoded",
 ];
 
 type PResult<T> = Result<T, ()>;
@@ -847,6 +848,44 @@ impl<'a> Parser<'a> {
         Ok(Expr::new(ExprKind::BoxLit([a.min(b), a.max(b), c.min(d), c.max(d)]), sp))
     }
 
+    /// `8.8079E, 53.07N` (or latitude first): one coordinate of each axis.
+    fn point(&mut self) -> PResult<Expr> {
+        let start = self.span();
+        let Tok::Coord(a, ax) = self.bump().tok else { unreachable!() };
+        let (b, bx) = match (self.tok().clone(), self.tok_at(1).clone()) {
+            (Tok::Comma, Tok::Coord(b, bx)) => {
+                self.p += 2;
+                (b, bx)
+            }
+            _ => {
+                self.diags.push(
+                    Diagnostic::error("E108", start, Text2::new("A point needs a longitude and a latitude.", "Ein Punkt braucht eine Länge und eine Breite."))
+                        .why("Write the longitude with E or W and the latitude with N or S:", "Schreibe die Länge mit E oder W und die Breite mit N oder S:")
+                        .sugg("8.8079E, 53.0758N"),
+                );
+                return Err(());
+            }
+        };
+        let sp = start.to(self.prev_span());
+        let (lon, lat) = match (ax, bx) {
+            ('E', 'N') => (a, b),
+            ('N', 'E') => (b, a),
+            _ => {
+                self.diags.push(
+                    Diagnostic::error("E108", sp, Text2::new("A point needs one longitude and one latitude.", "Ein Punkt braucht eine Länge und eine Breite."))
+                        .why("One coordinate ends with E or W (longitude), the other with N or S (latitude):", "Eine Koordinate endet auf E oder W (Länge), die andere auf N oder S (Breite):")
+                        .sugg("8.8079E, 53.0758N"),
+                );
+                return Err(());
+            }
+        };
+        if !(-180.0..=180.0).contains(&lon) || !(-90.0..=90.0).contains(&lat) {
+            self.diags.push(Diagnostic::error("E108", sp, Text2::new("This point lies outside the world.", "Dieser Punkt liegt außerhalb der Welt.")));
+            return Err(());
+        }
+        Ok(Expr::new(ExprKind::Point([lon, lat]), sp))
+    }
+
     fn region(&mut self) -> PResult<Expr> {
         self.unary()
     }
@@ -886,6 +925,7 @@ impl<'a> Parser<'a> {
                 self.bump();
                 Ok(Expr::new(ExprKind::Num(v), sp))
             }
+            Tok::Coord(..) => self.point(),
             Tok::Date(s) => {
                 self.bump();
                 match dates::parse_iso(s) {
@@ -1020,6 +1060,18 @@ impl<'a> Parser<'a> {
             }
             "path" if matches!(self.tok_at(1), Tok::Ident(_)) && self.is_kw_at(2, "from") => return self.path(),
             "isochrone" if matches!(self.tok_at(1), Tok::Ident(_)) && self.is_kw_at(2, "from") => return self.isochrone(),
+            "geocode" | "geocoded" => {
+                self.bump();
+                let query = self.primary()?;
+                let sp2 = sp.to(query.span);
+                return Ok(Expr::new(ExprKind::Special(Box::new(Special::Geocode { one: w == "geocoded", query: Box::new(query) })), sp2));
+            }
+            "reverse-geocode" | "reverse-geocoded" => {
+                self.bump();
+                let at = self.primary()?;
+                let sp2 = sp.to(at.span);
+                return Ok(Expr::new(ExprKind::Special(Box::new(Special::ReverseGeocode { one: w == "reverse-geocoded", at: Box::new(at) })), sp2));
+            }
             "dataset" => {
                 self.bump();
                 if let Tok::Str(f) = self.tok().clone() {

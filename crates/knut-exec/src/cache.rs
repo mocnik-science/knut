@@ -47,4 +47,10 @@ pub struct Caches {
     pub closed: Mutex<HashMap<knut_lang::diag::Span, bool>>,
     /// Messages for the user about slow one-time work (index builds).
     pub notices: Mutex<Vec<String>>,
+    /// An address index built from a scan, when the database has none (geocoding).
+    pub addresses: OnceLock<R<Arc<Vec<u8>>>>,
+    /// Administrative areas around cells, by (admin level, cell) (address fields).
+    pub admin_cells: Mutex<HashMap<(u32, i32, i32), Arc<Vec<Arc<crate::address::Admin>>>>>,
+    /// Assembled administrative areas by relation id.
+    pub admin_areas: Mutex<HashMap<i64, Arc<crate::address::Admin>>>,
 }

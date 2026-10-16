@@ -43,6 +43,8 @@ count of benches, benches                # two outputs</pre>
 <tr><td><code>.unchangedBefore .unchangedAfter</code></td><td>time to the previous / next version</td></tr>
 <tr><td><code>.length .area .lon .lat .geometry</code></td><td>geometry (m, m², degrees)</td></tr>
 <tr><td><code>.keys .nodes .members</code></td><td>tag keys, nodes of a way, members of a relation</td></tr>
+<tr><td><code>.address .street .housenumber .postcode .suburb .district .city .county .state .state_code .country .country_code .continent</code></td><td>the address: from the <code>addr:*</code> tags, else from the boundaries around the element (<code>x.city</code> is the field, <code>x:addr:city</code> the tag)</td></tr>
+<tr><td><code>.score .distance</code></td><td>hits of <code>geocode</code> (quality 0–1) and <code>reverse-geocode</code> (metres)</td></tr>
 <tr><td>text: <code>.length .number .lower .upper</code></td><td>characters, conversion</td></tr>
 <tr><td>users: <code>.changesets .firstEdit .lastEdit .activeSpan .activeDays .edits</code></td><td></td></tr>
 <tr><td>changesets: <code>.time .closedAt .duration .count .comment .bbox</code></td><td></td></tr>
@@ -80,6 +82,7 @@ count of benches, benches                # two outputs</pre>
 <tr><td><code>within 8.7...8.9, 53.0...53.1</code></td><td>box: longitude range, latitude range</td></tr>
 <tr><td><code>within Vienna</code>, <code>within AT</code></td><td>place by name or ISO code of a boundary in the database</td></tr>
 <tr><td><code>within S</code></td><td>an area, a set of areas, an isochrone</td></tr>
+<tr><td><code>8.8079E, 53.0758N</code></td><td>a point (W and S for negative values); works wherever a place is needed, also <code>.lon .lat</code></td></tr>
 <tr><td><code>x near some _ in S [closer than 300 m]</code></td><td>some element of S is near (default 100 m); also <code>no</code>, <code>all</code></td></tr>
 <tr><td><code>… closer than 10 min by foot</code></td><td>on the street network (<code>foot</code>, <code>bicycle</code>, <code>car</code>)</td></tr>
 <tr><td><code>x overlapping y</code></td><td>geometries overlap</td></tr>
@@ -88,6 +91,16 @@ count of benches, benches                # two outputs</pre>
 <tr><td><code>isochrone I from a closer than 10 min by foot</code></td><td>reachable area (a region): a raster of cells of 1/200 of the radius (25–500 m); its border is approximate and may underestimate the area slightly (by up to half a cell at the edge)</td></tr>
 <tr><td><code>graph of ways w with …</code></td><td>own network, used with <code>using NET</code></td></tr>
 </table>
+
+<h2>Geocoding</h2>
+<table>
+<tr><td><code>geocode 'Am Wall 201, Bremen'</code></td><td>the elements with this address, best first (at most 20)</td></tr>
+<tr><td><code>geocoded 'Am Wall 201, Bremen'</code></td><td>the best one (as <code>first of geocode …</code>), or none</td></tr>
+<tr><td><code>reverse-geocode 8.8079E, 53.0758N</code></td><td>elements with an address within 200 m of a point or element, nearest first</td></tr>
+<tr><td><code>reverse-geocoded x</code></td><td>the nearest one, or none</td></tr>
+<tr><td><code>first of L</code>, <code>last of L</code></td><td>first or last element of a list or set</td></tr>
+</table>
+<p>The results are elements with their tags and address fields; they work in <code>path</code>, <code>isochrone</code>, <code>near</code> and <code>nearest</code>. Without the address index (<code>knut manage FILE add addresses</code>) geocoding searches the whole database, which is slow for large ones.</p>
 
 <h2>Aggregates</h2>
 <pre>FUNCTION of SET [with C] [within R] [on …] per GROUPING… [having C] [ordered by E]</pre>

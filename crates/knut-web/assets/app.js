@@ -37,18 +37,25 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// ----- icons (inline SVG, drawn with the text colour) ------------------------------------
+// ----- icons: Lucide (lucide.dev, ISC license, lucide-static 0.460.0), inline, drawn with the text colour
 
-const svg = path => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+const svg = body => `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 const ICONS = {
-  // the usual full-screen symbols: corners pointing out, corners pointing in
-  enlarge: svg('<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'),
-  shrink: svg('<path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"/>'),
-  left: svg('<path d="M15 5l-7 7 7 7"/>'),
-  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'),
-  moon: svg('<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>'),
-  auto: svg('<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>'),
-  right: svg('<path d="M9 5l7 7-7 7"/>'),
+  // the panel fills the window, and back
+  enlarge: svg('<path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>'),
+  shrink: svg('<path d="M8 3v3a2 2 0 0 1-2 2H3"/><path d="M21 8h-3a2 2 0 0 1-2-2V3"/><path d="M3 16h3a2 2 0 0 1 2 2v3"/><path d="M16 21v-3a2 2 0 0 1 2-2h3"/>'),
+  left: svg('<path d="m15 18-6-6 6-6"/>'),
+  right: svg('<path d="m9 18 6-6-6-6"/>'),
+  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'),
+  moon: svg('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
+  auto: svg('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
+  settings: svg('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
+  // About
+  bird: svg('<path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="m20 7 2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/>'),
+  // the simple page: questions in plain language
+  chat: svg('<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>'),
+  // the advanced page: the query editor with the map
+  rocket: svg('<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>'),
 };
 
 // ----- theme: light, dark or as the system ----------------------------------------------
@@ -60,6 +67,11 @@ function applyTheme() {
 }
 applyTheme();
 watch(theme, v => { store("theme", v); applyTheme(); });
+const THEMES = [
+  { id: "light", label: "Light", title: "Light colours", icon: ICONS.sun },
+  { id: "dark", label: "Dark", title: "Dark colours", icon: ICONS.moon },
+  { id: "auto", label: "Automatic", title: "As the system", icon: ICONS.auto },
+];
 
 // ----- panel: slides out to a small strip, or fills the window --------------------------
 
@@ -124,6 +136,7 @@ const Panel = {
       <header>
         <slot name="header"></slot>
         <div class="tools">
+          <slot name="tools"></slot>
           <button class="icon" :title="max ? 'Back to normal size' : 'Fill the whole window'" :aria-label="max ? 'Back to normal size' : 'Fill the whole window'"
             @click="toggleMax" v-html="max ? ICONS.shrink : ICONS.enlarge"></button>
           <button class="icon" title="Slide out of the way" aria-label="Slide out of the way" @click="toggleCollapse" v-html="outward"></button>
@@ -339,7 +352,9 @@ const ChatView = {
       const m = [];
       for (const t of turns.value) {
         m.push({ role: "user", content: t.question });
-        const reply = t.answer || t.ask;
+        // the model sees its earlier queries and questions back (not the answers): follow-up
+        // questions such as "and in Findorff?" refer to them
+        const reply = t.query ? `QUERY:\n${t.query}` : t.ask ? `ASK: ${t.ask}` : null;
         if (reply) m.push({ role: "assistant", content: reply });
       }
       return m;
@@ -401,13 +416,19 @@ const ChatView = {
       else if (e.key === "Escape" && busy.value) cancel();
     }
     onMounted(() => nextTick(() => { scrollDown(); input.value && input.value.focus(); }));
-    return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds };
+    return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds, theme, THEMES, ICONS };
   },
   template: `
     <div :class="['chat', { start: !turns.length }]">
       <div class="chat-top">
-        <button v-if="turns.length" class="small" :disabled="busy" title="Start a new conversation" @click="clear">New</button>
-        <button class="small" title="The query editor with the map" @click="emit('advanced')">Advanced</button>
+        <template v-if="turns.length">
+          <button class="word" :disabled="busy" title="Start a new conversation" @click="clear">New</button>
+          <span class="sep">|</span>
+        </template>
+        <button v-for="t in THEMES" :key="t.id" :class="['icon', { active: theme === t.id }]" :title="t.title" :aria-label="t.title"
+          :aria-pressed="theme === t.id" @click="theme = t.id" v-html="t.icon"></button>
+        <span class="sep">|</span>
+        <button class="icon" title="Advanced: the query editor with the map" aria-label="Advanced" @click="emit('advanced')" v-html="ICONS.rocket"></button>
       </div>
       <div class="turns">
         <img v-if="!turns.length" class="chat-logo" src="knut.svg" alt="knut">
@@ -430,7 +451,7 @@ const ChatView = {
           </div>
         </div>
       </div>
-      <div class="chat-input">
+      <div :class="['chat-input', { busy }]">
         <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask further…' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
           @keydown="key" :disabled="busy && false"></textarea>
         <button v-if="!busy" class="primary" :disabled="!text.trim()" title="Ask (Enter)" @click="ask">Ask</button>
@@ -678,11 +699,7 @@ const App = {
       state, map, editorHost, goToLine, messageLines,
       run, cancel, reset, progressPct, progressLabel, progressRight, filtered, useExample,
       summary, toggleLayer, zoomTo, saveJson, saveGeojson, copyText, COLORS, fmtSeconds, theme, simple, openTurn,
-      themes: [
-        { id: "light", label: "Light", title: "Light colours", icon: ICONS.sun },
-        { id: "dark", label: "Dark", title: "Dark colours", icon: ICONS.moon },
-        { id: "auto", label: "Automatic", title: "As the system", icon: ICONS.auto },
-      ],
+      themes: THEMES, ICONS,
     };
   },
   template: `
@@ -691,28 +708,35 @@ const App = {
 
     <Panel side="left" label="the query panel">
       <template #header>
+        <img class="brand" src="icon.svg" alt="" aria-hidden="true">
         <nav class="tabs" role="tablist">
-          <button v-for="t in ['query', 'examples', 'docs', 'settings', 'about']" :key="t" role="tab"
+          <button v-for="t in ['query', 'examples', 'docs']" :key="t" role="tab"
             :class="{ active: state.tab === t }" @click="state.tab = t">{{ t[0].toUpperCase() + t.slice(1) }}</button>
-          <button v-if="state.info && state.info.chat" class="to-simple" title="Questions in plain language" @click="state.mode = 'simple'">Simple</button>
+          <button role="tab" :class="['symbol', { active: state.tab === 'settings' }]" title="Settings" aria-label="Settings" @click="state.tab = 'settings'" v-html="ICONS.settings"></button>
+          <button role="tab" :class="['symbol', { active: state.tab === 'about' }]" title="About" aria-label="About" @click="state.tab = 'about'" v-html="ICONS.bird"></button>
         </nav>
+      </template>
+      <template #tools>
+        <button v-if="state.info && state.info.chat" class="icon" title="Questions in plain language (simple page)" aria-label="Questions in plain language"
+          @click="state.mode = 'simple'" v-html="ICONS.chat"></button>
       </template>
 
       <div v-show="state.tab === 'query'" class="tabpane">
         <div class="cm-host" ref="editorHost"></div>
+        <!-- the messages right below the editor, over the buttons -->
+        <div v-if="state.messages" class="messages">
+          <pre><template v-for="(l, i) in messageLines" :key="i"><a v-if="l.line" :class="l.cls" @click="goToLine(l.line)">{{ l.text }}</a><span v-else :class="l.cls">{{ l.text }}</span>
+</template></pre>
+        </div>
         <div class="actions">
           <button v-if="!state.running" class="primary" :disabled="!state.query.trim()" title="Run (⌘/Ctrl + Enter)" @click="run">Run</button>
           <button v-else class="danger" :disabled="state.cancelling" title="Cancel (Esc)" @click="cancel">Cancel</button>
           <button title="Clear the query, the results and the map" @click="reset">Reset</button>
-          <span v-if="state.status && !state.running" :class="['status', state.statusKind]" :title="state.status">{{ state.status }}</span>
-        </div>
-        <div v-if="state.running" class="progress">
-          <div :class="['bar', { busy: progressPct === null }]"><div class="fill" :style="{ width: (progressPct ?? 30) + '%' }"></div></div>
-          <div class="label"><span>{{ progressLabel }}</span><span>{{ progressRight }}</span></div>
-        </div>
-        <div v-if="state.messages" class="messages">
-          <pre><template v-for="(l, i) in messageLines" :key="i"><a v-if="l.line" :class="l.cls" @click="goToLine(l.line)">{{ l.text }}</a><span v-else :class="l.cls">{{ l.text }}</span>
-</template></pre>
+          <div v-if="state.running" class="progress">
+            <div class="label"><span>{{ progressLabel }}</span><span>{{ progressRight }}</span></div>
+            <div :class="['bar', { busy: progressPct === null }]"><div class="fill" :style="{ width: (progressPct ?? 30) + '%' }"></div></div>
+          </div>
+          <span v-else-if="state.status" :class="['status', state.statusKind]" :title="state.status">{{ state.status }}</span>
         </div>
       </div>
 

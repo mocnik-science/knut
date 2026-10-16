@@ -11,6 +11,7 @@ members = [
     "crates/knut-cli",
     "crates/knut-py",
     "crates/knut-llm",
+    "crates/knut-train",
 ]
 # knut-py is built with maturin (see crates/knut-py/pyproject.toml).
 default-members = [

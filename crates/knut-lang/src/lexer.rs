@@ -8,6 +8,9 @@ use crate::diag::{Diagnostic, Span, Text2};
 pub enum Tok {
     Ident(String),
     Num(f64),
+    /// A coordinate: a number glued to E, W, N or S (`8.8079E`, `53.07N`); W and S negative.
+    /// The letter: `E` for longitudes, `N` for latitudes.
+    Coord(f64, char),
     Str(String),
     /// `YYYY-M[-D][Thh:mm[:ss][Z|±hh:mm]]`
     Date(String),
@@ -51,6 +54,12 @@ impl Tok {
         match self {
             Tok::Ident(s) => format!("\"{s}\""),
             Tok::Num(n) => format!("the number {}", fmt_num(*n)),
+            Tok::Coord(n, a) => format!("the coordinate {}{}", fmt_num(n.abs()), match (a, *n < 0.0) {
+                ('E', false) => 'E',
+                ('E', true) => 'W',
+                (_, false) => 'N',
+                _ => 'S',
+            }),
             Tok::Str(s) => format!("the text '{s}'"),
             Tok::Date(s) | Tok::BadDate(s) => format!("the date {s}"),
             Tok::TagKey(s) => format!("the tag key \"{s}\""),
@@ -186,6 +195,14 @@ impl<'a> Lexer<'a> {
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                     while self.p < self.b.len() && is_key_char(self.b[self.p]) {
                         self.p += 1;
+                    }
+                    // `reverse-geocode`, `reverse-geocoded`: one word
+                    if &self.src[start..self.p] == "reverse" && self.src[self.p..].starts_with("-geocode") {
+                        let end = self.p + "-geocode".len();
+                        let end = if self.b.get(end) == Some(&b'd') { end + 1 } else { end };
+                        if !self.b.get(end).is_some_and(|c| is_key_char(*c)) {
+                            self.p = end;
+                        }
                     }
                     let s = self.src[start..self.p].to_string();
                     self.push(Tok::Ident(s), start);
@@ -418,6 +435,19 @@ impl<'a> Lexer<'a> {
             self.digits();
         }
         let v: f64 = self.src[start..self.p].parse().unwrap_or(0.0);
+        // a coordinate: `8.8079E`, `53.07N` (the letter glued, no letter or digit after it)
+        let axis = self.peek(0);
+        if matches!(axis, b'E' | b'W' | b'N' | b'S') && !is_key_char(self.peek(1)) {
+            self.p += 1;
+            let (v, a) = match axis {
+                b'E' => (v, 'E'),
+                b'W' => (-v, 'E'),
+                b'N' => (v, 'N'),
+                _ => (-v, 'N'),
+            };
+            self.push(Tok::Coord(v, a), start);
+            return;
+        }
         self.push(Tok::Num(v), start);
     }
 

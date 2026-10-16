@@ -18,7 +18,7 @@ const KEYWORDS = new Set([
   "randomly", "using", "seed", "the", "all", "some", "no", "nearest", "of", "by", "per", "having", "closer", "than",
   "equal", "near", "overlapping", "next", "previous", "define", "split", "at", "each", "path", "isochrone",
   "dataset", "graph", "groups", "ordered", "cell", "tile", "zoom", "chunk", "correlate", "regress", "confusion",
-  "fit", "powerlaw", "forecast", "classify",
+  "fit", "powerlaw", "forecast", "classify", "geocode", "geocoded",
 ]);
 const ATOMS = new Set(["none", "true", "false", "foot", "bicycle", "car", "transit", "en", "de"]);
 const KINDS = new Set(["node", "nodes", "way", "ways", "area", "areas", "relation", "relations", "changeset", "changesets",
@@ -36,7 +36,9 @@ const FIELDS = ["type", "osmType", "id", "version", "time", "deleted", "visible"
   "area", "nodes", "members", "roles", "versions", "firstEdit", "lastEdit", "activeSpan", "activeDays", "changesets",
   "edits", "name", "count", "closedAt", "duration", "bbox", "comment", "status", "text", "created", "closed",
   "comments", "values", "number", "lower", "upper", "items", "key", "map", "filter", "edges", "accuracy",
-  "predictions", "slope", "intercept", "r2", "alpha", "xmin"];
+  "predictions", "slope", "intercept", "r2", "alpha", "xmin", "address", "housenumber", "street", "postcode",
+  "suburb", "district", "city", "county", "state", "state_code", "country", "country_code", "continent", "score",
+  "distance"];
 
 const knut = StreamLanguage.define({
   name: "knut",
@@ -56,6 +58,8 @@ const knut = StreamLanguage.define({
     }
     if (stream.match(/\d{4}-\d{1,2}(-\d{1,2})?(T\d{1,2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?)?/)) return "date";
     if (stream.match(/\d+(\.\d+)?\.\.\.\d+(\.\d+)?/)) return "number";
+    // a coordinate of a point: 8.8079E, 53.0758N
+    if (stream.match(/\d+(\.\d+)?[EWNS](?![A-Za-z0-9_])/)) return "number";
     if (stream.match(/\d+(\.\d+)?/)) { st.after = "num"; return "number"; }
     if ((prev === "num" || prev === "tag") && (stream.match("km/h") || stream.match("%"))) return "unit";
     const glued = stream.pos > 0 && !/\s/.test(stream.string[stream.pos - 1]);
@@ -70,6 +74,7 @@ const knut = StreamLanguage.define({
       if (prev === "tagkey") st.after = "tag";
       return "operator";
     }
+    if (stream.match(/reverse-geocoded?(?![A-Za-z0-9_])/)) return "keyword";
     const w = stream.match(/[A-Za-z_][A-Za-z0-9_]*/);
     if (w) {
       const word = w[0];

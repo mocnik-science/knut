@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[test]
-fn hundred_examples_that_pass_the_check() {
+fn the_examples_pass_the_check() {
     let ex = knut_web::examples();
-    assert_eq!(ex.len(), 100);
+    assert_eq!(ex.len(), 106);
     for e in &ex {
         assert!(!e.title.is_empty() && !e.description.is_empty(), "{e:?}");
         // one or two sentences

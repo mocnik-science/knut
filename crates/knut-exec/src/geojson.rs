@@ -118,6 +118,19 @@ impl Builder<'_> {
         if let Some((k, v)) = extra {
             p.insert(k.into(), v);
         }
+        // hits of geocoding: the address and its parts, and the score or distance
+        if let Extra::Hit { score, distance } = &e.extra {
+            match distance {
+                Some(d) => p.insert("@distance".into(), json!(format!("{} m", crate::value::fmt_f64((d * 10.0).round() / 10.0)))),
+                None => p.insert("@score".into(), json!(score)),
+            };
+            let v = Value::Elem(std::sync::Arc::new(Elem::new(e.kind, e.otype, e.id, e.v.clone(), e.at)));
+            for f in ["address", "suburb", "city", "state", "country"] {
+                if let Ok(Some(Value::Text(t))) = crate::address::field(self.ctx, &v, e, f) {
+                    p.insert(format!("@{f}"), json!(t.as_ref()));
+                }
+            }
+        }
         self.push(&g, p);
     }
 

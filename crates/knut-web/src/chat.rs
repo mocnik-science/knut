@@ -18,15 +18,38 @@ const RESULTS_CHARS: usize = 6_000;
 /// A chat model: messages (role, content) in, the reply out.
 pub trait Model: Send + Sync {
     fn complete(&self, messages: &[(String, String)], max_tokens: usize) -> Result<String, String>;
+
+    /// The model was trained for knut (knut-additional/training) and takes the short
+    /// instructions; others get the reference of the language and examples.
+    fn trained(&self) -> bool {
+        false
+    }
 }
 
 /// A server with an OpenAI-compatible chat API (`…/v1/chat/completions`).
 pub struct HttpModel {
     pub url: String,
     pub model: String,
+    /// Whether the server says it serves a model trained for knut (`knut-llm`: `prompt` in
+    /// `/health`), once it has said so.
+    trained: std::sync::OnceLock<bool>,
 }
 
 impl HttpModel {
+    pub fn new(url: impl Into<String>, model: impl Into<String>) -> HttpModel {
+        HttpModel { url: url.into(), model: model.into(), trained: std::sync::OnceLock::new() }
+    }
+
+    /// The server's `/health`, if it has one.
+    fn health(&self) -> Option<J> {
+        let base = self.url.trim_end_matches('/');
+        let base = base.strip_suffix("/chat/completions").unwrap_or(base);
+        let base = base.strip_suffix("/v1").unwrap_or(base);
+        let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(5))).build().into();
+        let text = agent.get(format!("{base}/health")).call().ok()?.body_mut().read_to_string().ok()?;
+        serde_json::from_str(&text).ok()
+    }
+
     fn endpoint(&self) -> String {
         let base = self.url.trim_end_matches('/');
         if base.ends_with("/chat/completions") {
@@ -61,6 +84,18 @@ impl Model for HttpModel {
         }
         let content = v["choices"][0]["message"]["content"].as_str().ok_or_else(|| fail(&"no message in the reply"))?;
         Ok(strip_thinking(content))
+    }
+
+    fn trained(&self) -> bool {
+        if let Some(t) = self.trained.get() {
+            return *t;
+        }
+        // known once the model is loaded (servers without /health: not trained)
+        match self.health() {
+            Some(h) if h["status"] == "ready" => *self.trained.get_or_init(|| h["prompt"] == "short"),
+            Some(_) => false,
+            None => *self.trained.get_or_init(|| false),
+        }
     }
 }
 
@@ -146,15 +181,68 @@ pub fn plan(model: &dyn Model, system: &str, history: &[(String, String)], check
                     return Ok(out);
                 }
                 messages.push(("assistant".into(), reply));
-                messages.push((
-                    "user".into(),
-                    format!("Checking this query gives these messages:\n\n{}\n\nCorrect the query. Reply with QUERY: or ASK: again.", problems.join("\n\n")),
-                ));
+                messages.push(("user".into(), correction_message(&problems)));
                 out.problems = problems;
             }
         }
     }
     Ok(out)
+}
+
+/// How a question ended.
+#[derive(Debug)]
+pub enum Outcome<R> {
+    /// A question back to the user.
+    Ask(String),
+    /// No valid query: the last one and the messages of its check.
+    Invalid { query: Option<String>, problems: Vec<String> },
+    /// The query ran.
+    Ran { query: String, result: R },
+    /// The query was valid but failed when it ran (an unknown place, …), also after a
+    /// correction.
+    Failed { query: String, error: String },
+}
+
+/// Runs of a query that may fail and be corrected by the model.
+const MAX_RUNS: usize = 2;
+
+/// Turns a question into a query ([`plan`]), runs it, and lets the model correct it once
+/// more when it fails while running (for example `No region called "Gropelingen"`).
+/// `run` gives the result or the messages of the failure.
+pub fn solve<R>(
+    model: &dyn Model,
+    system: &str,
+    history: &[(String, String)],
+    check: &dyn Fn(&str) -> Vec<String>,
+    run: &dyn Fn(&str) -> Result<R, String>,
+    step: &dyn Fn(&str),
+) -> Result<Outcome<R>, String> {
+    let mut history = history.to_vec();
+    for runs in 1..=MAX_RUNS {
+        let p = plan(model, system, &history, check, step)?;
+        if let Some(a) = p.ask {
+            return Ok(Outcome::Ask(a));
+        }
+        if !p.problems.is_empty() || p.query.is_none() {
+            return Ok(Outcome::Invalid { query: p.query, problems: p.problems });
+        }
+        let query = p.query.unwrap_or_default();
+        step("running the query");
+        match run(&query) {
+            Ok(result) => return Ok(Outcome::Ran { query, result }),
+            Err(error) if runs == MAX_RUNS => return Ok(Outcome::Failed { query, error }),
+            Err(error) => {
+                history.push(("assistant".into(), format!("QUERY:\n{query}")));
+                history.push(("user".into(), correction_message(&[error])));
+            }
+        }
+    }
+    unreachable!("the last run returns")
+}
+
+/// What the model reads after the check of its query found errors.
+pub fn correction_message(problems: &[String]) -> String {
+    format!("Checking this query gives these messages:\n\n{}\n\nCorrect the query. Reply with QUERY: or ASK: again.", problems.join("\n\n"))
 }
 
 /// The results of a run as the model reads them: per output its expression and its text,
@@ -177,11 +265,32 @@ pub fn results_text(outputs: &[(String, String)]) -> String {
 
 /// The answer to the question from the query and its results.
 pub fn answer(model: &dyn Model, question: &str, query: &str, results: &str) -> Result<String, String> {
+    model.complete(&answer_messages(question, query, results), 600)
+}
+
+/// The messages that ask for the answer.
+pub fn answer_messages(question: &str, query: &str, results: &str) -> Vec<(String, String)> {
     let system = "You answer questions about OpenStreetMap data. You get the question, the knut query that was run for it, \
         and its results. Answer briefly, in the language of the question, using only the results. \
         Give numbers as they are in the results. If the results are empty or shortened, say so. Do not show the query.";
     let user = format!("Question: {question}\n\nQuery:\n{query}\n\nResults:\n{results}");
-    model.complete(&[("system".into(), system.into()), ("user".into(), user)], 600)
+    vec![("system".into(), system.into()), ("user".into(), user)]
+}
+
+/// The database for the model: file, area and time range.
+pub fn database_description(path: Option<&std::path::Path>, db: Option<&knut_exec::db::Db>) -> String {
+    let Some(db) = db else { return "none (queries must name one with knut_db)".into() };
+    let f = db.focus();
+    let name = path.and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    format!(
+        "{name}, area {:.2}–{:.2}° E, {:.2}–{:.2}° N, data from {} to {}. Places are named with `within NAME` (boundaries in the database).",
+        f.minx,
+        f.maxx,
+        f.miny,
+        f.maxy,
+        knut_lang::dates::format_instant(db.earliest),
+        knut_lang::dates::format_instant(db.latest)
+    )
 }
 
 /// A compact reference of the language for the model.
@@ -195,6 +304,9 @@ Space: ... within PLACE (a boundary in the database, e.g. within Vegesack) | wit
   (longitude range, latitude range) | x near some _ in S closer than 50 m | x near no _ in S closer than 50 m |
   nearest of S to x.
 Routing: path P from a to b by foot|bicycle|car (p.length, p.duration) | isochrone I from a closer than 10 min by foot.
+Addresses: geocoded 'Am Wall 201, Bremen' (the element with that address; geocode '…' gives a list, best first) |
+  reverse-geocoded 8.8079E, 53.0758N (the nearest address to a point: longitude E, latitude N) |
+  fields of any element: x.address x.street x.housenumber x.postcode x.suburb x.city x.state x.country.
   a and b are elements, e.g. s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'.
 Time: without a time, the state at the end of the data. ... on 2015-01-01 (state then) |
   ... on each year from 2010 to 2024 (one value per year) | ... from 2023 to 2024 (edits in that period) per year.
@@ -205,6 +317,21 @@ Tags: OpenStreetMap tags in English, e.g. amenity=bench|cafe|restaurant|school|l
   shop=bakery|supermarket|butcher, leisure=park|playground, highway=residential|cycleway|bus_stop, railway=station,
   tourism=museum|hotel, building, natural=water. Translate words of other languages to these tags
   (Bäckerei: shop=bakery, Spielplatz: leisure=playground, Bank zum Sitzen: amenity=bench).";
+
+/// The short instructions for a model trained for knut: the task and the database (it
+/// learnt the language from the training examples).
+pub fn short_prompt(database: &str) -> String {
+    format!(
+        "You turn questions about OpenStreetMap data into queries in the knut query language. \
+         Reply with QUERY: and the query, or with ASK: and one short question when something essential is missing.\n\
+         Database: {database}"
+    )
+}
+
+/// The instructions that fit the model.
+pub fn instructions(model: &dyn Model, database: &str, question: &str, examples: &[crate::Example]) -> String {
+    if model.trained() { short_prompt(database) } else { system_prompt(database, question, examples) }
+}
 
 /// Examples always shown to the model (titles in examples.json).
 const CORE_EXAMPLES: &[&str] = &["Count benches", "Within a place", "Walking route", "Ten minutes on foot", "Count per value", "State every year"];
@@ -306,6 +433,16 @@ mod tests {
         assert_eq!(p.query.as_deref(), Some("count of nodes n with n:amenity=bench"));
         assert!(p.problems.is_empty());
         assert_eq!(p.attempts, 2);
+    }
+
+    #[test]
+    fn a_failed_run_is_corrected() {
+        let model = Scripted(Mutex::new(vec!["QUERY:\ncount of nodes n within Gropelingen".into(), "QUERY:\ncount of nodes n within 'Gröpelingen'".into()]));
+        let run = |q: &str| if q.contains("Gropelingen") { Err("No region called \"Gropelingen\" is known.".to_string()) } else { Ok(7) };
+        match solve(&model, "system", &[("user".into(), "?".into())], &|_| Vec::new(), &run, &|_| {}).unwrap() {
+            Outcome::Ran { query, result } => assert_eq!((query.as_str(), result), ("count of nodes n within 'Gröpelingen'", 7)),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

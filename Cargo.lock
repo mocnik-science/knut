@@ -1810,6 +1810,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "knut-train"
+version = "2026.10.4"
+dependencies = [
+ "knut-exec",
+ "knut-lang",
+ "knut-web",
+ "serde_json",
+]
+
+[[package]]
 name = "knut-web"
 version = "2026.10.4"
 dependencies = [

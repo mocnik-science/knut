@@ -80,3 +80,27 @@ fn render_style() {
     assert!(r.starts_with("Error [E101]:  This looks like"), "{r}");
     assert!(r.contains("  3 | ways w with w:highway = primary\n                            ^\n"), "{r}");
 }
+
+#[test]
+fn geocoding_and_points() {
+    use knut_lang::ast::{ExprKind, Special, StmtKind};
+    ok("geocode 'Am Wall 201, Bremen'");
+    ok("a = geocoded 'Am Wall 201, Bremen'\na.city, a.state");
+    ok("reverse-geocoded 8.8079E, 53.0758N");
+    ok("(reverse-geocode 53.0758N, 8.8079E).map(x => [x.address, x.distance])");
+    ok("first of geocode 'Am Wall, Bremen', last of geocode 'Am Wall, Bremen'");
+    ok("path P from 73.98W, 40.75N to 74.01W, 40.70S by foot");
+    // the point, whatever the order of the coordinates
+    let (s, d) = knut_lang::parse("p = 53.0758N, 8.8079E");
+    assert!(d.is_empty(), "{d:?}");
+    let StmtKind::Assign { value, .. } = &s.stmts[0].kind else { panic!() };
+    assert_eq!(value.kind, ExprKind::Point([8.8079, 53.0758]));
+    let (s, _) = knut_lang::parse("reverse-geocode 8.8W, 53.07S");
+    let StmtKind::Output(o) = &s.stmts[0].kind else { panic!() };
+    let ExprKind::Special(sp) = &o[0].kind else { panic!() };
+    let Special::ReverseGeocode { one: false, at } = &**sp else { panic!() };
+    assert_eq!(at.kind, ExprKind::Point([-8.8, -53.07]));
+    // two longitudes, or one coordinate alone
+    err("8.8E, 9.1E", "E108");
+    err("x = 8.8E", "E108");
+}

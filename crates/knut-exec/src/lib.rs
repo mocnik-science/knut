@@ -4,6 +4,7 @@
 //! *knut* is short for *knutpunkt*, the Swedish word for ‘junction’ or ‘node’, which is
 //! the building blocks of OpenStreetMap data.
 
+pub mod address;
 pub mod agg;
 pub mod areas;
 pub mod arith;

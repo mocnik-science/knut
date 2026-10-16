@@ -110,6 +110,9 @@ pub fn field(ctx: &Ctx, v: &Value, f: &str, span: Span) -> R<Value> {
         Value::Region(r) => Ok(match f {
             "area" => Value::Num(area_num(r.area_m2())),
             "length" => Value::Num(Num::base(r.geom().length_m(), Dim::LENGTH)),
+            // a point (`8.8E, 53.07N`), else the representative point
+            "lon" => r.geom().rep_point().map_or(Value::None, |p| Value::num(p.0)),
+            "lat" => r.geom().rep_point().map_or(Value::None, |p| Value::num(p.1)),
             _ => return Err(unknown(ctx, v, f, span)),
         }),
         Value::Record(r) => Ok(r.iter().find(|(k, _)| k == f).map_or(Value::None, |(_, x)| x.clone())),
@@ -172,6 +175,16 @@ fn elem_field(ctx: &Ctx, v: &Value, e: &Arc<Elem>, f: &str, span: Span) -> R<Val
             });
         }
         _ => {}
+    }
+    match f {
+        "score" => return Ok(if let Extra::Hit { score, .. } = &e.extra && *score >= 0.0 { Value::num(*score) } else { Value::None }),
+        "distance" => {
+            return Ok(if let Extra::Hit { distance: Some(d), .. } = &e.extra { Value::Num(Num::base(*d, Dim::LENGTH)) } else { Value::None });
+        }
+        _ => {}
+    }
+    if let Some(a) = crate::address::field(ctx, v, e, f)? {
+        return Ok(a);
     }
     Ok(match f {
         "type" => Value::text(e.kind.name()),

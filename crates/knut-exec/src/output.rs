@@ -148,6 +148,14 @@ fn list_width(items: &[Value]) -> Option<usize> {
 
 fn cell(v: &Value) -> String {
     match v {
+        Value::Elem(e) if e.hit_text().is_some() => {
+            let l = e.label();
+            let hit = e.hit_text().unwrap_or_default();
+            match e.tag("name") {
+                Some(n) => format!("{l} ({n}) · {hit}"),
+                None => format!("{l} · {hit}"),
+            }
+        }
         Value::Elem(e) => {
             let l = e.label();
             match e.tag("name") {

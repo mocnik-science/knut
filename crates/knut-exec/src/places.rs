@@ -336,6 +336,15 @@ impl<'a> PlaceIx<'a> {
         (a..z).map(|k| (self.u32(self.posts + 8 * k), self.b[self.posts + 8 * k + 4])).filter(|x| x.0 < self.n_entries).collect()
     }
 
+    /// Number of entries.
+    pub fn len(&self) -> usize {
+        self.n_entries
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.n_entries == 0
+    }
+
     /// (type, id, admin level, administrative) of an entry.
     pub fn entry(&self, i: usize) -> (ObjType, i64, u32, bool) {
         let o = self.entries + 16 * i;

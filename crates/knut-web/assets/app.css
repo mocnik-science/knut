@@ -149,10 +149,10 @@ input[type=search], input.text {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 6px 8px 0 10px; border-bottom: 1px solid var(--border);
 }
-.panel.right > header { padding-bottom: 6px; }
-.panel h2 { font-size: 14px; margin: 0; font-weight: 600; }
+/* like a tab on the left: the symbols of both panels on one line */
+.panel h2 { font-size: 14px; margin: 0; font-weight: 600; padding: 6px 0; border-bottom: 2px solid transparent; }
 .panel h2 .meta { color: var(--fg-soft); font-weight: 400; margin-left: 6px; }
-.panel .tools { display: flex; gap: 2px; padding-bottom: 4px; }
+.panel .tools { display: flex; align-items: center; gap: 2px; padding-bottom: 2px; }
 .panel .body { flex: 1; min-height: 0; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
 /* collapsed: the whole strip opens the panel, with just a chevron; under the mouse the panel peeks out a little */
 .panel .handle {
@@ -170,6 +170,11 @@ input[type=search], input.text {
 .tabs { display: flex; gap: 2px; }
 .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 6px 12px; color: var(--fg-soft); }
 .tabs button.active { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs button.symbol { padding: 6px 9px; line-height: 0; }
+.panel > header .tabs { margin-right: auto; }
+/* the icon of knut at the very left of the header, not a control */
+.panel > header .brand { width: 30px; height: 30px; flex-shrink: 0; margin: 0 -2px 2px 0; pointer-events: none; user-select: none; }
+.tabs button.symbol:hover, .tabs button:not(.active):hover { color: var(--fg); }
 
 /* ----- query ------------------------------------------------------------------------ */
 
@@ -189,20 +194,22 @@ input[type=search], input.text {
 }
 .cm-host:focus-within { border-bottom-color: var(--accent); }
 .cm-host .cm-editor { flex: 1; min-height: 0; }
-.actions { display: flex; align-items: flex-end; gap: 8px; margin: 0; padding: 0; }
+.actions { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; }
 .actions > button:first-child { margin-left: 0; }
 .actions .status { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; line-height: 1; }
 
+.actions .progress { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .progress .bar { height: 6px; border-radius: 3px; background: var(--bg-soft); overflow: hidden; position: relative; }
 .progress .fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.15s linear; }
 .progress .bar.busy .fill { width: 30% !important; position: absolute; animation: busy 1.1s ease-in-out infinite; }
 @keyframes busy { 0% { left: -30%; } 100% { left: 100%; } }
-.progress .label { margin-top: 4px; font-size: 12px; color: var(--fg-soft); display: flex; justify-content: space-between; gap: 8px; }
+.progress .label { font-size: 12px; color: var(--fg-soft); display: flex; justify-content: space-between; gap: 8px; }
 .progress .label span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress .label span:last-child { white-space: nowrap; flex-shrink: 0; }
 
-.messages { max-height: 40%; overflow: auto; flex-shrink: 0; }
-.messages pre { margin: 0; padding: 8px 10px; border-radius: 7px; background: var(--bg-code); font: 12px/1.45 var(--mono); white-space: pre-wrap; }
+/* full width, right below the editor and its line, closed by a line over the buttons */
+.messages { max-height: 40%; overflow: auto; flex-shrink: 0; margin: -10px -10px 0; border-bottom: 1px solid var(--border); }
+.messages pre { margin: 0; padding: 8px 10px; background: var(--bg-code); font: 12px/1.45 var(--mono); white-space: pre-wrap; }
 .messages .error { color: var(--danger); font-weight: 600; }
 .messages .warning { color: var(--warn); font-weight: 600; }
 .messages a { color: var(--accent); cursor: pointer; text-decoration: underline; }
@@ -287,7 +294,14 @@ input[type=search], input.text {
 /* ----- simple page: questions in plain language ------------------------------------- */
 
 .chat { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; }
-.chat-top { position: absolute; top: 12px; right: 14px; display: flex; gap: 6px; z-index: 1; }
+.chat-top { position: absolute; top: 12px; right: 14px; display: flex; align-items: center; gap: 4px; z-index: 1; color: var(--fg-soft); }
+.chat-top .sep { margin: 0 4px; opacity: 0.6; user-select: none; }
+.chat-top button.word { border: none; background: none; padding: 2px 4px; font-size: 12px; color: var(--fg-soft); }
+.chat-top button.word:hover:not(:disabled) { color: var(--fg); }
+/* the modes: plain symbols, the chosen one brighter */
+.chat-top button.icon, .chat-top button.icon:hover { background: none; border-color: transparent; }
+.chat-top button.icon:hover { color: var(--fg); }
+.chat-top button.icon.active { color: var(--fg); }
 .chat .turns { flex: 1; overflow: auto; padding: 56px 16px 12px; }
 .chat .turn { max-width: 760px; margin: 0 auto 22px; }
 .chat .question { margin-left: auto; width: fit-content; max-width: 85%; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 14px; padding: 8px 12px; white-space: pre-wrap; }
@@ -301,17 +315,23 @@ input[type=search], input.text {
 .chat .query pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: var(--bg-code); font: 12px/1.45 var(--mono); white-space: pre-wrap; }
 .chat .problems { margin: 0; padding-left: 18px; color: var(--danger); }
 .chat .turn-tools { margin-top: 6px; }
-.chat-input { max-width: 760px; width: calc(100% - 32px); margin: 0 auto 18px; display: flex; gap: 8px; align-items: flex-end; }
-.chat-input textarea {
-  flex: 1; resize: none; font: inherit; font-size: 15px; color: var(--fg); background: var(--bg);
-  border: 1px solid var(--border); border-radius: 22px; padding: 10px 16px; min-height: 44px; max-height: 40vh;
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12); field-sizing: content;
+/* one field: the text, and the button as its right end */
+.chat-input {
+  max-width: 760px; width: calc(100% - 32px); margin: 0 auto 18px; display: flex; align-items: stretch;
+  border: 1px solid var(--border); border-radius: 22px; background: var(--bg); overflow: hidden;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.12);
 }
-.chat-input textarea:focus { outline: none; border-color: var(--accent); }
-.chat-input button { border-radius: 22px; min-height: 44px; padding: 0 18px; }
+.chat-input:focus-within { border-color: var(--accent); }
+.chat-input textarea {
+  flex: 1; resize: none; font: inherit; font-size: 15px; color: var(--fg); background: transparent;
+  border: none; padding: 11px 16px; min-height: 44px; max-height: 40vh; field-sizing: content;
+}
+.chat-input textarea:focus { outline: none; }
+.chat-input button { border: none; border-radius: 0; min-height: 44px; padding: 0 20px; }
+.chat-input button.primary:disabled { opacity: 1; background: var(--bg-soft); color: var(--fg-soft); }
 /* before the first question: the field in the middle, like a search page */
 .chat.start { justify-content: center; }
 .chat.start .turns { flex: 0 0 auto; overflow: visible; padding: 0 16px 18px; display: flex; justify-content: center; }
 .chat-logo { width: min(220px, 60%); height: auto; }
 .chat.start .chat-input { margin-bottom: 18vh; }
-.tabs .to-simple { margin-left: auto; color: var(--fg-soft); }
+

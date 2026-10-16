@@ -420,6 +420,42 @@
   "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nreach = isochrone I from s closer than 10 min by foot\ncount of nodes x with x:shop within reach"
  },
  {
+  "category": "Geocoding",
+  "title": "Find an address",
+  "description": "The elements with this address, best first; click one on the map for its address, quality and the parts of the address.",
+  "code": "geocode 'Am Wall 201, Bremen'"
+ },
+ {
+  "category": "Geocoding",
+  "title": "The parts of an address",
+  "description": "`geocoded` gives the best hit; the address fields come from the addr tags or from the boundaries around the element.",
+  "code": "a = geocoded 'Am Wall 201, Bremen'\na.address, a.suburb, a.city, a.state, a.country, a.continent"
+ },
+ {
+  "category": "Geocoding",
+  "title": "What is here?",
+  "description": "The nearest address to a point, written as longitude E and latitude N.",
+  "code": "reverse-geocoded 8.8079E, 53.0758N"
+ },
+ {
+  "category": "Geocoding",
+  "title": "Addresses around a point",
+  "description": "All addresses within 200 m, nearest first, with their distance.",
+  "code": "(reverse-geocode 8.8079E, 53.0758N).map(x => [x.address, x.distance])"
+ },
+ {
+  "category": "Geocoding",
+  "title": "Walk from an address",
+  "description": "A geocoded address works like any element, here as the start of a route (change the address for other databases).",
+  "code": "a = geocoded 'Am Wall 201, Bremen'\ns = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\npath P from a to s by foot"
+ },
+ {
+  "category": "Geocoding",
+  "title": "Per suburb",
+  "description": "Address fields work for every element; they can, for instance, be used to count the benches in each suburb of a city.",
+  "code": "count of nodes n with n:amenity=bench within Bremen per n.suburb having count > 100"
+ },
+ {
   "category": "Grouping",
   "title": "Count per value",
   "description": "`per` groups by the value of an expression.",

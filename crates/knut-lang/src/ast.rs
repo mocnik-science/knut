@@ -308,6 +308,9 @@ pub enum OfFunc {
     LastVersion,
     Nearest,
     Graph,
+    /// `first of LIST`, `last of LIST`
+    First,
+    Last,
 }
 
 impl OfFunc {
@@ -335,6 +338,8 @@ impl OfFunc {
             "user" => OfFunc::User,
             "nearest" => OfFunc::Nearest,
             "graph" => OfFunc::Graph,
+            "first" => OfFunc::First,
+            "last" => OfFunc::Last,
             _ => return None,
         })
     }
@@ -365,12 +370,14 @@ impl OfFunc {
             OfFunc::LastVersion => "last version",
             OfFunc::Nearest => "nearest",
             OfFunc::Graph => "graph",
+            OfFunc::First => "first",
+            OfFunc::Last => "last",
         }
     }
 
     /// Functions that take a whole set and reduce it.
     pub fn is_aggregate(self) -> bool {
-        !matches!(self, OfFunc::User | OfFunc::FirstVersion | OfFunc::LastVersion | OfFunc::Nearest | OfFunc::Graph)
+        !matches!(self, OfFunc::User | OfFunc::FirstVersion | OfFunc::LastVersion | OfFunc::Nearest | OfFunc::Graph | OfFunc::First | OfFunc::Last)
     }
 }
 
@@ -393,6 +400,12 @@ pub enum Special {
     FitPowerlaw(P<Expr>),
     Forecast { n: u64, unit: TimeUnit, of: P<Expr> },
     Classify { set: P<Expr>, label: P<Expr>, features: P<Expr> },
+    /// `geocode TEXT` (a ranked list of elements with that address) or `geocoded TEXT` (the
+    /// best one).
+    Geocode { one: bool, query: P<Expr> },
+    /// `reverse-geocode X` (elements with addresses near a point or element, nearest first)
+    /// or `reverse-geocoded X` (the nearest).
+    ReverseGeocode { one: bool, at: P<Expr> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -407,6 +420,8 @@ pub enum ExprKind {
     List(Vec<Expr>),
     /// lon0, lon1, lat0, lat1
     BoxLit([f64; 4]),
+    /// `8.8079E, 53.07N`: lon, lat
+    Point([f64; 2]),
     /// Number or tag with a unit.
     Unit(P<Expr>, &'static Unit, Span),
     Field(P<Expr>, String, Span),
@@ -565,6 +580,8 @@ impl Expr {
                     v.push(label);
                     v.push(features);
                 }
+                Special::Geocode { query, .. } => v.push(query),
+                Special::ReverseGeocode { at, .. } => v.push(at),
             },
             _ => {}
         }

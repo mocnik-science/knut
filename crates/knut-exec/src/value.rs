@@ -287,6 +287,8 @@ pub enum Extra {
     Key(Arc<KeyRec>),
     /// Data set row: (file label)
     Row(Arc<str>),
+    /// An element found by `geocode` (score 0–1) or `reverse-geocode` (distance in metres).
+    Hit { score: f64, distance: Option<f64> },
 }
 
 #[derive(Debug)]
@@ -327,6 +329,21 @@ impl Elem {
     }
 
     /// Order of the object (kind ignoring area/way split for history lookups).
+    /// For a hit of `geocode` or `reverse-geocode`: its address (from the tags) and score or
+    /// distance, for the text of results.
+    pub fn hit_text(&self) -> Option<String> {
+        let Extra::Hit { score, distance } = &self.extra else { return None };
+        let t = |k: &str| self.tag(k).map(|s| s.to_string());
+        let line1 = [t("addr:street").or_else(|| t("addr:place")), t("addr:housenumber")].into_iter().flatten().collect::<Vec<_>>().join(" ");
+        let line2 = [t("addr:postcode"), t("addr:city")].into_iter().flatten().collect::<Vec<_>>().join(" ");
+        let addr = [line1, line2].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", ");
+        let how = match distance {
+            Some(d) => format!("{} m", fmt_f64((d * 10.0).round() / 10.0)),
+            None => format!("score {}", fmt_f64(*score)),
+        };
+        Some(format!("{addr} · {how}"))
+    }
+
     pub fn label(&self) -> String {
         match self.kind {
             EKind::Node | EKind::Way | EKind::Area | EKind::Relation => {
