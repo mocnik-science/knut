@@ -5,8 +5,8 @@
   --fg: #1d2129;
   --fg-soft: #5d6470;
   --border: #d9dce1;
-  --accent: #2f6fdd;
-  --accent-fg: #ffffff;
+  --accent: #f7a740;
+  --accent-fg: #1d2129;
   --danger: #c93a3a;
   --warn: #a86b00;
   --ok: #2e8540;
@@ -26,8 +26,8 @@
   --hl-atom: #b5341c;
   --hl-operator: #6b7280;
   --hl-comment: #8a919c;
-  --hl-active: rgba(47, 111, 221, 0.06);
-  --hl-selection: rgba(47, 111, 221, 0.22);
+  --hl-active: rgba(247, 167, 64, 0.08);
+  --hl-selection: rgba(247, 167, 64, 0.28);
   color-scheme: light;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
@@ -40,7 +40,7 @@
     --fg: #e4e6ea;
     --fg-soft: #9aa1ac;
     --border: #353a43;
-    --accent: #5b8ff0;
+    --accent: #f7a740;
     --danger: #ef6b6b;
     --warn: #e0a83a;
     --ok: #5cbf73;
@@ -56,8 +56,8 @@
     --hl-atom: #f28b74;
     --hl-operator: #9aa1ac;
     --hl-comment: #6b7380;
-    --hl-active: rgba(91, 143, 240, 0.08);
-    --hl-selection: rgba(91, 143, 240, 0.3);
+    --hl-active: rgba(247, 167, 64, 0.08);
+    --hl-selection: rgba(247, 167, 64, 0.3);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -68,7 +68,7 @@
     --fg: #e4e6ea;
     --fg-soft: #9aa1ac;
     --border: #353a43;
-    --accent: #5b8ff0;
+    --accent: #f7a740;
     --danger: #ef6b6b;
     --warn: #e0a83a;
     --ok: #5cbf73;
@@ -84,8 +84,8 @@
     --hl-atom: #f28b74;
     --hl-operator: #9aa1ac;
     --hl-comment: #6b7380;
-    --hl-active: rgba(91, 143, 240, 0.08);
-    --hl-selection: rgba(91, 143, 240, 0.3);
+    --hl-active: rgba(247, 167, 64, 0.08);
+    --hl-selection: rgba(247, 167, 64, 0.3);
   }
 }
 
@@ -308,7 +308,7 @@ input[type=search], input.text {
 .chat-top button.icon, .chat-top button.icon:hover { background: none; border-color: transparent; }
 .chat-top button.icon:hover { color: var(--fg); }
 .chat-top button.icon.active { color: var(--fg); }
-.chat .turns { flex: 1; overflow: auto; padding: 56px 16px 12px; }
+.chat .turns { flex: 1; overflow: auto; padding: 56px 16px 36px; }
 .chat .turn { max-width: 760px; margin: 0 auto 22px; }
 /* copy symbols: next to the question (right) and the answer (left), shown under the mouse */
 .chat .question-row, .chat .answer-row { position: relative; }
@@ -317,21 +317,38 @@ input[type=search], input.text {
 .chat button.copy {
   position: absolute; top: 50%; transform: translateY(-50%); padding: 4px; line-height: 0; border: none; background: none;
   color: var(--fg-soft); opacity: 0; transition: opacity 0.15s ease; cursor: pointer;
+  /* above the area that shows it */
+  z-index: 1;
 }
 .chat button.copy:hover { color: var(--fg); }
-.chat .question-row .copy { left: 100%; margin-left: 2px; }
-.chat .answer-row .copy { right: 100%; margin-right: 2px; top: 0; transform: none; padding-top: 3px; }
+/* the symbols right of a question: copy, edit */
+.chat .question-row .q-tools { position: absolute; left: 100%; top: 50%; transform: translateY(-50%); margin-left: 8px; display: flex; gap: 2px; z-index: 1; }
+.chat .question-row .q-tools .copy { position: static; transform: none; }
+.chat .answer-row .copy { right: 100%; margin-right: 8px; top: 0; transform: none; padding-top: 3px; }
 /* the area that shows the symbol reaches a little beyond the text, over the symbol */
-.chat .question-row::after { content: ""; position: absolute; top: 0; bottom: 0; left: 100%; width: 32px; }
-.chat .answer-row::before { content: ""; position: absolute; top: 0; bottom: 0; right: 100%; width: 32px; }
+.chat .question-row::after { content: ""; position: absolute; top: 0; bottom: 0; left: 100%; width: 64px; }
+.chat .answer-row::before { content: ""; position: absolute; top: 0; bottom: 0; right: 100%; width: 38px; }
 .chat .question-row:hover .copy, .chat .answer-row:hover .copy, .chat button.copy:focus-visible { opacity: 1; }
 /* narrow windows: room at the sides for the symbols */
-@media (max-width: 840px) { .chat .turn { padding: 0 26px; } }
+@media (max-width: 860px) { .chat .turn { padding: 0 34px 0 34px; } .chat .question-row { margin-right: 26px; } }
+/* a question being edited */
+.chat .question-edit { margin-left: auto; width: min(100%, 560px); display: flex; flex-direction: column; gap: 6px; }
+.chat .question-edit textarea {
+  font: inherit; color: var(--fg); background: var(--bg-soft); border: 1px solid var(--accent); border-radius: 14px;
+  padding: 8px 12px; resize: none; field-sizing: content; min-height: 38px; max-height: 30vh;
+}
+.chat .question-edit textarea:focus { outline: none; }
+.chat .question-edit .edit-buttons { display: flex; justify-content: flex-end; gap: 6px; }
 .chat .question { margin-left: auto; width: fit-content; max-width: 85%; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 14px; padding: 8px 12px; white-space: pre-wrap; }
 .chat .reply { margin-top: 10px; }
 .chat .answer { margin: 0 0 6px; font-size: 15px; line-height: 1.55; white-space: pre-wrap; }
 .chat .note { margin: 0 0 6px; color: var(--fg-soft); }
 .chat .note.bad { color: var(--danger); white-space: pre-wrap; }
+/* a failed answer, with the way to ask again right after it */
+.chat .error-row { display: flex; align-items: flex-start; gap: 6px; }
+.chat .error-row .note { margin-bottom: 6px; }
+.chat button.retry { border: none; background: none; padding: 2px; line-height: 0; color: var(--fg-soft); cursor: pointer; flex-shrink: 0; }
+.chat button.retry:hover { color: var(--fg); }
 .chat .note.busy::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 .chat .query summary { cursor: pointer; color: var(--fg-soft); font-size: 12px; list-style: none; width: fit-content; margin-left: auto; }
@@ -342,6 +359,38 @@ input[type=search], input.text {
 .chat .query pre { margin: 6px 0; padding: 8px 36px 8px 10px; border-radius: 6px; background: var(--bg-code); font: 12px/1.45 var(--mono); white-space: pre-wrap; }
 .chat .query-code button.icon { position: absolute; top: 4px; right: 4px; }
 .chat .problems { margin: 0; padding-left: 18px; color: var(--danger); }
+/* answers with a map or a chart */
+.chat .answer-map { position: relative; height: 340px; margin: 4px 0 8px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+.chat .answer-map .map { position: absolute; inset: 0; }
+/* after a reload: the map darkened, the way to its content in the middle */
+.chat .answer-map .regenerate {
+  position: absolute; inset: 0; z-index: 2; border: none; border-radius: 0; background: rgba(0, 0, 0, 0.55);
+  color: #fff; font-size: 15px; cursor: pointer; transition: background 0.2s ease;
+}
+.chat .answer-map .regenerate:hover { background: rgba(0, 0, 0, 0.45); }
+.chat .answer-map .regenerate:disabled { cursor: progress; opacity: 1; }
+/* its controls at its own edges (not beside the panels like the big map) */
+.chat .answer-map .maplibregl-ctrl-bottom-right, .chat .answer-map .maplibregl-ctrl-top-right { right: 0; }
+.chat .answer-map .maplibregl-ctrl-bottom-left, .chat .answer-map .maplibregl-ctrl-top-left { left: 0; }
+.chat .answer-map .maplibregl-ctrl-bottom-right .maplibregl-ctrl { margin: 0 8px 8px 0; }
+.chat .answer-map .maplibregl-ctrl-bottom-right .maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show) { margin-right: 10.5px; }
+.chat .answer-chart { margin: 4px 0 8px; }
+/* "Show them on the map" below an answer that counts: a plain link */
+.chat button.show-map { border: none; background: none; padding: 0; margin: 0 0 6px; color: var(--accent); font-size: 13px; cursor: pointer; }
+.chat button.show-map:hover { text-decoration: underline; }
+.chat button.show-map:disabled { color: var(--fg-soft); text-decoration: none; cursor: progress; }
+.chat .answer-chart svg { display: block; overflow: visible; }
+.chat .answer-chart .axis text, .chat .answer-chart .label, .chat .answer-chart .value { fill: var(--fg-soft); font: 12px var(--sans, inherit); }
+.chat .answer-chart .label { fill: var(--fg); }
+.chat .answer-chart .axis path, .chat .answer-chart .axis line { stroke: var(--border); }
+.chat .chart-note { color: var(--fg-soft); font-size: 12px; margin-top: 2px; }
+.chat .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--fg-soft); margin-top: 4px; }
+.chat .chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.fade-enter-active { transition: opacity 0.4s ease; }
+/* the text interface fades in and out over the advanced editor */
+.cross-enter-active, .cross-leave-active { transition: opacity 0.35s ease; }
+.cross-enter-from, .cross-leave-to { opacity: 0; }
+.fade-enter-from { opacity: 0; }
 /* one field: the text, and the button as its right end */
 .chat-input {
   max-width: 760px; width: calc(100% - 32px); margin: 0 auto 18px; display: flex; align-items: stretch;
@@ -361,4 +410,6 @@ input[type=search], input.text {
 .chat.start .turns { flex: 0 0 auto; overflow: visible; padding: 0 16px 18px; display: flex; justify-content: center; }
 .chat-logo { width: min(220px, 60%); height: auto; }
 .chat.start .chat-input { margin-bottom: 18vh; }
+/* the note right below the field (the field then keeps less room below it) */
+.chat-disclaimer { margin: -12px auto 10px; font-size: 11px; color: var(--fg-soft); text-align: center; }
 

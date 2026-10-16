@@ -3,7 +3,12 @@ import { createEditor } from "./editor.js";
 
 const { createApp, ref, reactive, computed, watch, nextTick, onMounted, markRaw } = Vue;
 
-const COLORS = ["#2f6fdd", "#e8590c", "#2b8a3e", "#c2255c", "#7048e8", "#0c8599", "#e67700", "#5c940d"];
+// The colours of knut: orange (the accent of the page), cyan, magenta, then colours that go
+// with them. Maps (and the result list) lead with magenta and cyan, the charts of the text
+// interface with orange.
+const KNUT_COLORS = ["#f7a740", "#36b4d2", "#cd68a0", "#7dc07a", "#8d7bd8", "#f06b5b", "#2e7fa8", "#c9b43c"];
+const CHAT_COLORS = KNUT_COLORS;
+const COLORS = ["#cd68a0", "#36b4d2", "#f7a740", ...KNUT_COLORS.slice(3)];
 const POLL_MS = 150;
 const CHECK_DELAY_MS = 400;
 
@@ -57,6 +62,10 @@ const ICONS = {
   // copy to the clipboard, and done
   copy: svg('<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>'),
   check: svg('<path d="M20 6 9 17l-5-5"/>'),
+  // ask a question again
+  retry: svg('<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'),
+  // edit a question
+  pencil: svg('<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>'),
   // the advanced query editor
   rocket: svg('<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>'),
 };
@@ -208,6 +217,49 @@ function popupHtml(p) {
   return `<div class="popup"><h4>${escapeHtml(p["@label"] || "")}</h4><table>${rows}</table></div>`;
 }
 
+// The base map recedes behind the results: paler, with little colour.
+const RECEDE = { "raster-saturation": -0.65, "raster-contrast": -0.2, "raster-brightness-min": 0.2 };
+
+/// Draws results (with GeoJSON) on a map, in the colours of the result list; a click on a
+/// feature shows its tags. Returns the layers and the box of all features.
+function addResults(map, results, prefix, colors = COLORS) {
+  const layers = [];
+  const all = [Infinity, Infinity, -Infinity, -Infinity];
+  results.forEach((r, i) => {
+    if (!r.geojson) return;
+    const src = prefix + i;
+    const color = colors[i % colors.length];
+    map.addSource(src, { type: "geojson", data: r.geojson });
+    // groups with values: shade by value
+    const vals = r.geojson.features.map(f => f.properties["@value"]).filter(v => typeof v === "number");
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    const fillColor = vals.length > 1 && hi > lo
+      ? ["interpolate", ["linear"], ["to-number", ["get", "@value"], lo], lo, "#fff5eb", hi, color]
+      : color;
+    const fillOpacity = vals.length > 1 ? 0.65 : 0.25;
+    const poly = ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false];
+    const line = ["match", ["geometry-type"], ["LineString", "MultiLineString"], true, false];
+    const point = ["match", ["geometry-type"], ["Point", "MultiPoint"], true, false];
+    map.addLayer({ id: src + ":fill", type: "fill", source: src, filter: poly, paint: { "fill-color": fillColor, "fill-opacity": fillOpacity } });
+    map.addLayer({ id: src + ":outline", type: "line", source: src, filter: poly, paint: { "line-color": color, "line-width": 1 } });
+    map.addLayer({ id: src + ":line", type: "line", source: src, filter: line, paint: { "line-color": color, "line-width": 3 } });
+    map.addLayer({
+      id: src + ":point", type: "circle", source: src, filter: point,
+      paint: { "circle-color": color, "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 16, 6], "circle-stroke-color": "#fff", "circle-stroke-width": 1 },
+    });
+    for (const kind of ["fill", "line", "point"]) {
+      const id = src + ":" + kind;
+      map.on("click", id, e => new maplibregl.Popup({ maxWidth: "360px" }).setLngLat(e.lngLat).setHTML(popupHtml(e.features[0].properties)).addTo(map));
+      map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
+      map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
+    }
+    layers.push(src + ":fill", src + ":outline", src + ":line", src + ":point");
+    const b = bboxOf(r.geojson);
+    if (b) extend(all, [[b[0], b[1]], [b[2], b[3]]]);
+  });
+  return { layers, box: all[0] <= all[2] ? all : null };
+}
+
 const MapView = {
   props: { info: Object },
   setup(props, { expose }) {
@@ -215,9 +267,6 @@ const MapView = {
     let map = null;
     let ready = null;
     let layers = [];
-
-    // the base map recedes behind the results: paler, with little colour
-    const RECEDE = { "raster-saturation": -0.65, "raster-contrast": -0.2, "raster-brightness-min": 0.2 };
 
     onMounted(() => {
       // the default map starts receded (no flash of full colour); other styles once loaded
@@ -287,38 +336,9 @@ const MapView = {
     async function show(results) {
       await clear();
       const all = [Infinity, Infinity, -Infinity, -Infinity];
-      results.forEach((r, i) => {
-        if (!r.geojson) return;
-        const src = "out" + i;
-        const color = COLORS[i % COLORS.length];
-        map.addSource(src, { type: "geojson", data: r.geojson });
-        // groups with values: shade by value
-        const vals = r.geojson.features.map(f => f.properties["@value"]).filter(v => typeof v === "number");
-        const lo = Math.min(...vals), hi = Math.max(...vals);
-        const fillColor = vals.length > 1 && hi > lo
-          ? ["interpolate", ["linear"], ["to-number", ["get", "@value"], lo], lo, "#fff5eb", hi, color]
-          : color;
-        const fillOpacity = vals.length > 1 ? 0.65 : 0.25;
-        const poly = ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false];
-        const line = ["match", ["geometry-type"], ["LineString", "MultiLineString"], true, false];
-        const point = ["match", ["geometry-type"], ["Point", "MultiPoint"], true, false];
-        map.addLayer({ id: src + ":fill", type: "fill", source: src, filter: poly, paint: { "fill-color": fillColor, "fill-opacity": fillOpacity } });
-        map.addLayer({ id: src + ":outline", type: "line", source: src, filter: poly, paint: { "line-color": color, "line-width": 1 } });
-        map.addLayer({ id: src + ":line", type: "line", source: src, filter: line, paint: { "line-color": color, "line-width": 3 } });
-        map.addLayer({
-          id: src + ":point", type: "circle", source: src, filter: point,
-          paint: { "circle-color": color, "circle-radius": ["interpolate", ["linear"], ["zoom"], 8, 2.5, 16, 6], "circle-stroke-color": "#fff", "circle-stroke-width": 1 },
-        });
-        for (const kind of ["fill", "line", "point"]) {
-          const id = src + ":" + kind;
-          map.on("click", id, e => new maplibregl.Popup({ maxWidth: "360px" }).setLngLat(e.lngLat).setHTML(popupHtml(e.features[0].properties)).addTo(map));
-          map.on("mouseenter", id, () => { map.getCanvas().style.cursor = "pointer"; });
-          map.on("mouseleave", id, () => { map.getCanvas().style.cursor = ""; });
-        }
-        layers.push(src + ":fill", src + ":outline", src + ":line", src + ":point");
-        const b = bboxOf(r.geojson);
-        if (b) extend(all, [[b[0], b[1]], [b[2], b[3]]]);
-      });
+      const added = addResults(map, results, "out");
+      layers = added.layers;
+      if (added.box) extend(all, [[added.box[0], added.box[1]], [added.box[2], added.box[3]]]);
       if (all[0] <= all[2]) fitBox(all, true);
     }
 
@@ -338,7 +358,189 @@ const MapView = {
 // A search field; a question goes to the language model, which writes a query (checked and
 // corrected on the server), runs it and answers; or asks back. Each turn can be opened in
 // the editor of the advanced page, with its results on the map.
+// ----- answers of the text interface: a small map, a chart ------------------------------
+
+/// The results with geometry on a small map in the answer. After a reload only the box is
+/// known: the map shows it, darkened, and a click runs the query again.
+const AnswerMap = {
+  props: { results: Array, box: Array, stale: Boolean, loading: Boolean },
+  emits: ["regenerate"],
+  setup(props, { emit }) {
+    const el = ref(null);
+    let map = null;
+    let ready = null;
+    async function draw() {
+      if (!map || !props.results || !props.results.length) return;
+      await ready;
+      const { box } = addResults(map, props.results, "a", COLORS);
+      const b = box || props.box;
+      if (b) map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 24, maxZoom: 16, animate: false });
+    }
+    function create() {
+      const osm = { ...OSM_STYLE, layers: [{ ...OSM_STYLE.layers[0], paint: RECEDE }] };
+      const b = props.box;
+      map = markRaw(new maplibregl.Map({
+        container: el.value, style: osm,
+        ...(b ? { bounds: [[b[0], b[1]], [b[2], b[3]]], fitBoundsOptions: { padding: 24, maxZoom: 16 } } : { center: [10, 51], zoom: 4 }),
+        attributionControl: { compact: true },
+        // the page scrolls past the map; zooming needs the modifier key
+        cooperativeGestures: true,
+      }));
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+      map.dragRotate.disable();
+      map.touchZoomRotate.disableRotation();
+      ready = new Promise(r => map.on("load", r));
+      // the map may be made before the page has its layout: it follows the size of its box
+      new ResizeObserver(() => map.resize()).observe(el.value);
+      map.on("load", () => map.resize());
+      // the attribution starts as the (i) button
+      const collapse = () => {
+        const a = el.value && el.value.querySelector(".maplibregl-ctrl-attrib");
+        if (a) { a.classList.remove("maplibregl-compact-show"); a.removeAttribute("open"); }
+      };
+      collapse();
+      map.on("load", collapse);
+      draw();
+    }
+    onMounted(create);
+    watch(() => props.results, draw);
+    return { el, emit };
+  },
+  template: `
+    <div class="answer-map">
+      <div class="map" ref="el"></div>
+      <button v-if="stale" class="regenerate" :disabled="loading" @click="emit('regenerate')">{{ loading ? 're-generating…' : 'click to re-generate' }}</button>
+    </div>`,
+};
+
+/// The outputs with something to draw.
+function geoOf(outputs) {
+  return outputs.filter(o => o.geojson && o.geojson.features && o.geojson.features.length).map(o => ({ expr: o.expr, geojson: o.geojson }));
+}
+
+/// The box of all of them (kept with the answer, for the map after a reload).
+function boxOf(geo) {
+  const all = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const g of geo) {
+    const b = bboxOf(g.geojson);
+    if (b) extend(all, [[b[0], b[1]], [b[2], b[3]]]);
+  }
+  return all[0] <= all[2] ? all.map(x => Math.round(x * 1e5) / 1e5) : null;
+}
+
+/// For an answer that counts (`count of SELECTION`, one output, not grouped): the query that
+/// shows what was counted, for "Show them on the map". `null` otherwise.
+function mapQueryOf(query) {
+  if (!query) return null;
+  const lines = query.split("\n");
+  // outputs: lines that are not assignments, settings or comments
+  const outputs = lines.map((l, i) => [l, i]).filter(([l]) => l.trim() && !/^\s/.test(l) && !/^\s*#/.test(l) && !/^[A-Za-z_][A-Za-z0-9_]*\s*=[^=>]/.test(l));
+  if (outputs.length !== 1) return null;
+  const [line, i] = outputs[0];
+  const m = line.trim().match(/^count of (.+)$/);
+  if (!m || /\b(per|on each|from)\b/.test(m[1]) || /,/.test(m[1].replace(/\([^()]*\)|\[[^\]]*\]|'[^']*'/g, ""))) return null;
+  let sel = m[1].trim();
+  if (sel.startsWith("(") && sel.endsWith(")")) sel = sel.slice(1, -1);
+  const out = lines.slice();
+  out[i] = sel;
+  return out.join("\n");
+}
+
+/// The data of a chart from the results: a time series (a line, time on the x axis) or
+/// values per category (bars, the categories on the y axis). `null` if there is none.
+function chartOf(outputs) {
+  const TIME = ["year", "month", "week", "day"];
+  for (const o of outputs) {
+    const rows = Array.isArray(o.value) ? o.value : null;
+    if (!rows || rows.length < 2 || !rows.every(r => r && typeof r === "object" && !Array.isArray(r))) continue;
+    // elements (with their tags) are drawn on a map, not charted
+    if (rows.some(r => "tags" in r || "geometry" in r)) continue;
+    const keys = Object.keys(rows[0]);
+    // coordinates and identities are never values of a chart (places belong on a map)
+    const NOT = ["lon", "lat", "id", "version", "@id", "@version"];
+    const num = keys.find(k => !NOT.includes(k) && rows.every(r => typeof r[k] === "number" || (r[k] && typeof r[k].value === "number")));
+    if (!num) continue;
+    const val = r => (typeof r[num] === "number" ? r[num] : r[num].value);
+    const label = v => v && typeof v === "object" ? (v.tags && v.tags.name) || v["@label"] || `${v.type || ""} ${v.id || ""}`.trim() : String(v);
+    const time = keys.find(k => TIME.includes(k));
+    if (time) {
+      // further keys: one line each (at most 8)
+      const other = keys.find(k => k !== time && k !== num);
+      const series = new Map();
+      for (const r of rows) {
+        const name = other ? label(r[other]) : o.expr;
+        if (!series.has(name)) series.set(name, []);
+        series.get(name).push({ x: String(r[time]), y: val(r) });
+      }
+      return { kind: "time", unit: time, series: [...series.entries()].slice(0, 8).map(([name, points]) => ({ name, points })) };
+    }
+    const cat = keys.find(k => k !== num);
+    if (!cat) continue;
+    const bars = rows.map(r => ({ name: label(r[cat]), value: val(r) })).filter(b => b.name !== "none");
+    bars.sort((a, b) => b.value - a.value);
+    return { kind: "bars", bars: bars.slice(0, 15), more: Math.max(0, bars.length - 15) };
+  }
+  return null;
+}
+
+/// A simple chart (d3): lines over time, or horizontal bars per category.
+const AnswerChart = {
+  props: { chart: Object },
+  setup(props) {
+    const el = ref(null);
+    function draw() {
+      if (!el.value || typeof d3 === "undefined") return;
+      const c = props.chart;
+      const box = d3.select(el.value);
+      box.selectAll("*").remove();
+      const W = el.value.clientWidth || 600;
+      if (c.kind === "bars") {
+        const row = 22, left = Math.min(220, 12 + 7 * Math.max(...c.bars.map(b => b.name.length)));
+        const H = c.bars.length * row + 8;
+        const svg = box.append("svg").attr("width", W).attr("height", H);
+        const x = d3.scaleLinear().domain([0, d3.max(c.bars, b => b.value) || 1]).range([0, W - left - 60]);
+        const g = svg.selectAll("g").data(c.bars).join("g").attr("transform", (_, i) => `translate(0,${i * row + 4})`);
+        g.append("text").attr("class", "label").attr("x", left - 8).attr("y", row / 2).attr("dy", "0.32em").attr("text-anchor", "end")
+          .text(b => b.name.length > 30 ? b.name.slice(0, 29) + "…" : b.name);
+        g.append("rect").attr("x", left).attr("y", 3).attr("height", row - 7).attr("rx", 2).attr("fill", CHAT_COLORS[0]).attr("width", 0)
+          .transition().duration(500).attr("width", b => Math.max(1, x(b.value)));
+        g.append("text").attr("class", "value").attr("y", row / 2).attr("dy", "0.32em").attr("x", b => left + x(b.value) + 6).text(b => d3.format(",")(b.value));
+        if (c.more) box.append("div").attr("class", "chart-note").text(`and ${c.more} more`);
+        return;
+      }
+      const H = 220, m = { top: 10, right: 16, bottom: 26, left: 48 };
+      const svg = box.append("svg").attr("width", W).attr("height", H);
+      const xs = c.series[0].points.map(p => p.x);
+      const x = d3.scalePoint().domain(xs).range([m.left, W - m.right]).padding(0.3);
+      const ymax = d3.max(c.series.flatMap(s => s.points.map(p => p.y))) || 1;
+      const y = d3.scaleLinear().domain([0, ymax]).nice().range([H - m.bottom, m.top]);
+      // at most about one label per 60 px
+      const step = Math.ceil(xs.length / Math.max(1, Math.floor((W - m.left - m.right) / 60)));
+      svg.append("g").attr("class", "axis").attr("transform", `translate(0,${H - m.bottom})`)
+        .call(d3.axisBottom(x).tickValues(xs.filter((_, i) => i % step === 0)).tickSizeOuter(0));
+      svg.append("g").attr("class", "axis").attr("transform", `translate(${m.left},0)`).call(d3.axisLeft(y).ticks(5).tickFormat(d3.format("~s")));
+      const line = d3.line().x(p => x(p.x)).y(p => y(p.y));
+      c.series.forEach((s, i) => {
+        const color = CHAT_COLORS[i % CHAT_COLORS.length];
+        const path = svg.append("path").datum(s.points).attr("fill", "none").attr("stroke", color).attr("stroke-width", 2).attr("d", line);
+        const len = path.node().getTotalLength();
+        path.attr("stroke-dasharray", `${len} ${len}`).attr("stroke-dashoffset", len).transition().duration(700).attr("stroke-dashoffset", 0);
+        svg.append("g").selectAll("circle").data(s.points).join("circle").attr("cx", p => x(p.x)).attr("cy", p => y(p.y)).attr("r", 2.5).attr("fill", color)
+          .append("title").text(p => `${p.x}: ${d3.format(",")(p.y)}`);
+      });
+      if (c.series.length > 1) {
+        const lg = box.append("div").attr("class", "chart-legend");
+        c.series.forEach((s, i) => lg.append("span").html(`<i style="background:${CHAT_COLORS[i % CHAT_COLORS.length]}"></i>${escapeHtml(s.name)}`));
+      }
+    }
+    onMounted(() => nextTick(draw));
+    return { el };
+  },
+  template: `<div class="answer-chart" ref="el"></div>`,
+};
+
 const ChatView = {
+  components: { AnswerMap, AnswerChart },
   props: { info: Object, db: String },
   emits: ["advanced", "open"],
   setup(props, { emit }) {
@@ -349,7 +551,9 @@ const ChatView = {
     const input = ref(null);
     let job = null;
     let timer = null;
-    watch(turns, v => store("chat", v.map(t => ({ ...t, outputs: undefined }))), { deep: true });
+    // kept: questions, answers, queries, charts; not the geometries (too large) nor the state
+    // of the animation
+    watch(turns, v => store("chat", v.map(t => ({ ...t, outputs: undefined, geo: undefined, typed: undefined, reveal: undefined, regenerating: undefined }))), { deep: true });
 
     function history() {
       const m = [];
@@ -390,17 +594,102 @@ const ChatView = {
         }
         const c = j.chat || {};
         const outputs = (j.result && j.result.outputs) || [];
-        done({ ...c, cancelled: j.state === "cancelled", outputs, mapped: outputs.some(o => o.geojson), seconds: j.seconds });
+        // a chart for values over time or per category, else a map for geometries
+        // (also without a text: a map may be the whole answer)
+        const ok = !c.error && !c.ask && j.state !== "cancelled";
+        const chart = ok ? chartOf(outputs) : null;
+        const geo = !chart && ok ? geoOf(outputs) : [];
+        done({ ...c, cancelled: j.state === "cancelled", outputs, chart, geo: geo.length ? geo : null, box: boxOf(geo), mapped: geo.length > 0, seconds: j.seconds });
       } catch (e) {
         done({ error: "Lost the connection to knut web: " + e.message });
       }
     }
     function done(fields) {
       clearTimeout(timer);
-      Object.assign(turns.value[turns.value.length - 1], fields);
+      const t = turns.value[turns.value.length - 1];
+      Object.assign(t, fields);
       busy.value = false;
       job = null;
+      if (t.answer || t.ask) typeOut(t);
       nextTick(() => { scrollDown(); input.value && input.value.focus(); });
+    }
+    // the geometries of an answer again (after a reload): its query runs once more; for an
+    // answer that counts, the query of what was counted ("Show them on the map")
+    function showOnMap(t) {
+      t.mapQuery = mapQueryOf(t.query);
+      regenerate(t);
+    }
+    async function regenerate(t) {
+      const script = t.mapQuery || t.query;
+      if (t.regenerating || !script) return;
+      t.regenerating = true;
+      try {
+        const r = await fetch("api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ script, db: props.db }) });
+        const { job: id } = await r.json();
+        for (;;) {
+          await new Promise(res => setTimeout(res, POLL_MS));
+          const j = await (await fetch("api/job/" + id)).json();
+          if (j.state === "running") continue;
+          const geo = geoOf((j.result && j.result.outputs) || []);
+          if (geo.length) {
+            t.geo = geo;
+            t.box = boxOf(geo);
+          }
+          break;
+        }
+      } catch (e) {
+        // stays as it is: a click tries again
+      }
+      t.regenerating = false;
+    }
+    // editing a question asks it again: the answers from there on are dropped
+    const editing = ref(null);
+    const editText = ref("");
+    const editBox = ref(null);
+    function startEdit(i) {
+      editing.value = i;
+      editText.value = turns.value[i].question;
+      nextTick(() => {
+        const box = Array.isArray(editBox.value) ? editBox.value[0] : editBox.value;
+        if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+      });
+    }
+    function submitEdit() {
+      const q = editText.value.trim();
+      if (!q || busy.value || editing.value === null) return;
+      turns.value.splice(editing.value);
+      editing.value = null;
+      text.value = q;
+      ask();
+    }
+    // a question that failed (knut web not reachable, …) is sent once more
+    function retry(i) {
+      if (busy.value) return;
+      const q = turns.value[i].question;
+      turns.value.splice(i);
+      text.value = q;
+      ask();
+    }
+    function editKey(e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitEdit(); }
+      else if (e.key === "Escape") { e.preventDefault(); editing.value = null; }
+    }
+    // the part of the answer written so far
+    const shown = t => { const s = t.ask || t.answer || ""; return t.typed == null ? s : s.slice(0, t.typed); };
+    // the answer appears as if written, quickly; then, a moment later, its map or chart
+    function typeOut(t) {
+      const text = t.answer || t.ask;
+      t.typed = 0;
+      t.reveal = false;
+      const total = Math.min(1500, Math.max(300, text.length * 12));
+      const t0 = performance.now();
+      const tick = () => {
+        const k = Math.min(1, (performance.now() - t0) / total);
+        t.typed = Math.round(text.length * k);
+        if (k < 1) return requestAnimationFrame(tick);
+        setTimeout(() => { t.reveal = true; nextTick(scrollDown); }, 250);
+      };
+      requestAnimationFrame(tick);
     }
     async function cancel() {
       if (job) await fetch("api/job/" + job + "/cancel", { method: "POST" }).catch(() => {});
@@ -414,9 +703,34 @@ const ChatView = {
       const el = document.querySelector(".chat .turns");
       if (el) el.scrollTop = el.scrollHeight;
     }
+    // ↑ and ↓ go through the earlier questions (from the first or last line of the field); the
+    // text being written comes back after the newest one
+    let back = null;
+    let draft = "";
+    function browse(e, dir) {
+      const ta = e.target;
+      const before = ta.value.slice(0, ta.selectionStart), after = ta.value.slice(ta.selectionEnd);
+      if (dir < 0 ? before.includes("\n") : after.includes("\n")) return;
+      const qs = turns.value.map(t => t.question);
+      if (!qs.length) return;
+      if (back === null) {
+        if (dir > 0) return;
+        draft = text.value;
+        back = qs.length;
+      }
+      const next = back + dir;
+      if (next < 0) return;
+      e.preventDefault();
+      back = next >= qs.length ? null : next;
+      text.value = back === null ? draft : qs[back];
+      nextTick(() => ta.setSelectionRange(ta.value.length, ta.value.length));
+    }
+    watch(text, v => { if (back !== null && v !== turns.value[back]?.question) back = null; });
     function key(e) {
-      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); }
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); back = null; ask(); }
       else if (e.key === "Escape" && busy.value) cancel();
+      else if (e.key === "ArrowUp") browse(e, -1);
+      else if (e.key === "ArrowDown") browse(e, 1);
     }
     onMounted(() => nextTick(() => { scrollDown(); input.value && input.value.focus(); }));
     // copies a text; the symbol shows a check for a moment
@@ -426,7 +740,8 @@ const ChatView = {
       copied.value = id;
       setTimeout(() => { if (copied.value === id) copied.value = null; }, 1200);
     }
-    return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds, theme, THEMES, ICONS, copied, copy };
+    return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds, theme, THEMES, ICONS, copied, copy, shown, regenerate, showOnMap, mapQueryOf,
+      editing, editText, editBox, startEdit, submitEdit, editKey, retry };
   },
   template: `
     <div :class="['chat', { start: !turns.length }]">
@@ -445,20 +760,41 @@ const ChatView = {
       <div class="turns">
         <img v-if="!turns.length" class="chat-logo" src="knut.svg" alt="knut">
         <div v-for="(t, i) in turns" :key="i" class="turn">
-          <div class="question-row">
+          <!-- a question being edited: asked again from here on (Enter), or left as it was (Esc) -->
+          <div v-if="editing === i" class="question-edit">
+            <textarea ref="editBox" v-model="editText" rows="1" @keydown="editKey" aria-label="Edit the question"></textarea>
+            <div class="edit-buttons">
+              <button class="small" @click="editing = null">Cancel</button>
+              <button class="small primary" :disabled="!editText.trim() || busy" @click="submitEdit">Send</button>
+            </div>
+          </div>
+          <div v-else class="question-row">
             <div class="question">{{ t.question }}</div>
-            <button class="copy" :title="copied === 'q' + i ? 'Copied' : 'Copy'" aria-label="Copy the question" @click="copy(t.question, 'q' + i)"
-              v-html="copied === 'q' + i ? ICONS.check : ICONS.copy"></button>
+            <div class="q-tools">
+              <button class="copy" :title="copied === 'q' + i ? 'Copied' : 'Copy'" aria-label="Copy the question" @click="copy(t.question, 'q' + i)"
+                v-html="copied === 'q' + i ? ICONS.check : ICONS.copy"></button>
+              <button v-if="!busy" class="copy" title="Edit and ask again" aria-label="Edit the question" @click="startEdit(i)" v-html="ICONS.pencil"></button>
+            </div>
           </div>
           <div class="reply">
             <div v-if="t.ask || t.answer" class="answer-row">
               <button class="copy" :title="copied === 'a' + i ? 'Copied' : 'Copy'" aria-label="Copy the answer" @click="copy(t.ask || t.answer, 'a' + i)"
                 v-html="copied === 'a' + i ? ICONS.check : ICONS.copy"></button>
-              <p class="answer">{{ t.ask || t.answer }}</p>
+              <p class="answer">{{ shown(t) }}</p>
             </div>
             <p v-else-if="t.cancelled" class="note">Cancelled.</p>
-            <p v-else-if="t.error" class="note bad">{{ t.error }}</p>
+            <div v-else-if="t.error" class="error-row">
+              <p class="note bad">{{ t.error }}</p>
+              <button v-if="!busy" class="retry" title="Ask again" aria-label="Ask the question again" @click="retry(i)" v-html="ICONS.retry"></button>
+            </div>
             <p v-else-if="busy && i === turns.length - 1" class="note busy">{{ label }} …</p>
+            <Transition name="fade">
+              <AnswerChart v-if="t.chart && t.reveal !== false" :chart="t.chart" />
+              <AnswerMap v-else-if="(t.geo || t.box) && t.reveal !== false" :results="t.geo || []" :box="t.box" :stale="!t.geo"
+                :loading="!!t.regenerating" @regenerate="regenerate(t)" />
+              <button v-else-if="t.answer && t.reveal !== false && mapQueryOf(t.query)" class="show-map" :disabled="!!t.regenerating"
+                @click="showOnMap(t)">{{ t.regenerating ? 'drawing the map…' : 'Show them on the map' }}</button>
+            </Transition>
             <!-- right below the answer: the time it took; opened, the query and a way to the editor -->
             <details v-if="t.query" class="query">
               <summary :title="'The query' + (t.seconds ? ', computed in ' + fmtSeconds(t.seconds) : '')">{{ t.seconds ? fmtSeconds(t.seconds) : 'query' }}</summary>
@@ -473,11 +809,12 @@ const ChatView = {
         </div>
       </div>
       <div :class="['chat-input', { busy }]">
-        <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask further…' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
+        <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask a follow-up question…' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
           @keydown="key" :disabled="busy && false"></textarea>
         <button v-if="!busy" class="primary" :disabled="!text.trim()" title="Ask (Enter)" @click="ask">Ask</button>
         <button v-else class="danger" title="Cancel (Esc)" @click="cancel">Cancel</button>
       </div>
+      <p v-if="turns.length" class="chat-disclaimer">knut is experimental and might be mistaken.</p>
     </div>`,
 };
 
@@ -511,7 +848,9 @@ const App = {
       mode: load("mode", "text") === "simple" ? "text" : load("mode", "text"),
     });
     watch(() => state.mode, v => store("mode", v));
-    const textMode = computed(() => !!(state.info && state.info.chat) && state.mode === "text");
+    // shown at once when chosen (before the server has said whether it has a language model,
+    // so that the advanced editor does not flash up); without a model it fades over to it
+    const textMode = computed(() => state.mode === "text" && (!state.info || !!state.info.chat));
     watch(() => state.query, v => store("query", v));
     watch(() => state.db, v => store("db", v));
 
@@ -725,7 +1064,9 @@ const App = {
     };
   },
   template: `
-    <ChatView v-if="textMode" :info="state.info" :db="state.db" @advanced="state.mode = 'advanced'" @open="openTurn" />
+    <Transition name="cross">
+      <ChatView v-if="textMode" :info="state.info" :db="state.db" @advanced="state.mode = 'advanced'" @open="openTurn" />
+    </Transition>
     <MapView ref="map" :info="state.info" />
 
     <Panel side="left" label="the query panel">
