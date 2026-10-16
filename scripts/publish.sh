@@ -29,7 +29,7 @@ for c in $crates; do
   fi
 done
 if [ "$(echo $exclude | wc -w)" -lt "$(expr 2 \* $(echo $crates | wc -w))" ]; then
-  cargo publish --workspace $exclude || status=1
+  cargo publish --workspace --allow-dirty $exclude || status=1
 fi
 uv publish --check-url https://pypi.org/simple/ "$dist"/* || status=1
 exit $status
