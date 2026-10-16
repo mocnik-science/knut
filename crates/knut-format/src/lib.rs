@@ -6,6 +6,7 @@
 pub mod block;
 pub mod bloom;
 pub mod codec;
+pub mod container;
 pub mod diff;
 mod error;
 pub mod hilbert;

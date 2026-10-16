@@ -454,52 +454,114 @@ pub fn powerlaw(xs: &[f64]) -> Option<(f64, f64, usize)> {
     Some((1.0 + v.len() as f64 / s, xmin, v.len()))
 }
 
-/// k-nearest-neighbour classifier on standardized features (k = 5, majority vote, ties
-/// to the smaller label). Returns predictions and leave-one-out accuracy on the labelled
-/// items.
-pub fn knn(train: &[(Vec<f64>, Value)], query: &[Vec<f64>]) -> (Vec<Option<Value>>, Option<f64>) {
+/// One feature of `classify`: a number, or a place (compared by distance on the sphere).
+#[derive(Clone, Copy, Debug)]
+pub enum Feature {
+    Num(f64),
+    Place(P),
+}
+
+/// k-nearest-neighbour classifier (k = 5, majority vote, ties to the smaller label).
+/// Numbers are standardized (z-values); a place becomes a point on the unit sphere scaled
+/// by the spread of the training places, so that neighbours by place are the nearest on the
+/// sphere. Returns predictions and leave-one-out accuracy on the labelled items.
+pub fn knn(train: &[(Vec<Feature>, Value)], query: &[Vec<Feature>]) -> (Vec<Option<Value>>, Option<f64>) {
+    const K: usize = 5;
     if train.is_empty() {
         return (query.iter().map(|_| None).collect(), None);
     }
-    let dims = train[0].0.len();
-    let mut mean = vec![0.0; dims];
-    let mut sd = vec![0.0; dims];
-    for (x, _) in train {
-        for d in 0..dims {
-            mean[d] += x[d] / train.len() as f64;
+    let shape: Vec<bool> = train[0].0.iter().map(|f| matches!(f, Feature::Place(_))).collect();
+    let n = train.len() as f64;
+    // per feature: (offset, scale) for numbers; (centre, spread) for places
+    let mut scales = Vec::with_capacity(shape.len());
+    for (j, &place) in shape.iter().enumerate() {
+        if place {
+            let us: Vec<[f64; 3]> = train.iter().map(|(x, _)| unit(place_of(&x[j]))).collect();
+            let mut c = [0.0; 3];
+            for u in &us {
+                for d in 0..3 {
+                    c[d] += u[d];
+                }
+            }
+            let len = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt().max(1e-12);
+            let c = [c[0] / len, c[1] / len, c[2] / len];
+            let ms: f64 = us.iter().map(|u| (0..3).map(|d| (u[d] - c[d]).powi(2)).sum::<f64>()).sum::<f64>() / n;
+            scales.push((0.0, if ms > 0.0 { ms.sqrt() } else { 1.0 }));
+        } else {
+            let mean = train.iter().map(|(x, _)| num_of(&x[j])).sum::<f64>() / n;
+            let var = train.iter().map(|(x, _)| (num_of(&x[j]) - mean).powi(2)).sum::<f64>() / n;
+            scales.push((mean, if var > 0.0 { var.sqrt() } else { 1.0 }));
         }
     }
-    for (x, _) in train {
-        for d in 0..dims {
-            sd[d] += (x[d] - mean[d]).powi(2) / train.len() as f64;
+    let dims: usize = shape.iter().map(|&p| if p { 3 } else { 1 }).sum();
+    let embed = |x: &[Feature]| -> Vec<f64> {
+        let mut v = Vec::with_capacity(dims);
+        for (j, f) in x.iter().enumerate() {
+            match f {
+                Feature::Place(p) => v.extend(unit(*p).iter().map(|c| c / scales[j].1)),
+                Feature::Num(a) => v.push((a - scales[j].0) / scales[j].1),
+            }
         }
-    }
-    let sd: Vec<f64> = sd.iter().map(|v| if *v > 0.0 { v.sqrt() } else { 1.0 }).collect();
-    let z = |x: &[f64]| -> Vec<f64> { (0..dims).map(|d| (x[d] - mean[d]) / sd[d]).collect() };
-    let tz: Vec<(Vec<f64>, &Value)> = train.iter().map(|(x, l)| (z(x), l)).collect();
-    let vote = |q: &[f64], skip: Option<usize>| -> Option<Value> {
-        let mut ds: Vec<(f64, usize)> = tz
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| Some(*i) != skip)
-            .map(|(i, (x, _))| (x.iter().zip(q).map(|(a, b)| (a - b).powi(2)).sum::<f64>(), i))
-            .collect();
-        ds.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        v
+    };
+    let pts: Vec<Vec<f64>> = train.iter().map(|(x, _)| embed(x)).collect();
+    let tree = crate::kdtree::KdTree::build(&pts, dims.max(1));
+    let vote = |q: &[f64], skip: Option<u32>| -> Option<Value> {
         let mut votes: HashMap<Key, (Value, u32)> = HashMap::default();
-        for (_, i) in ds.iter().take(5) {
-            let l = tz[*i].1;
+        for (_, i) in tree.nearest(q, K, skip) {
+            let l = &train[i as usize].1;
             votes.entry(l.key()).or_insert_with(|| (l.clone(), 0)).1 += 1;
         }
         let mut vs: Vec<(Key, (Value, u32))> = votes.into_iter().collect();
         vs.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(&b.0)));
         vs.into_iter().next().map(|x| x.1.0)
     };
-    let preds = query.iter().map(|q| vote(&z(q), None)).collect();
-    let acc = if tz.len() > 1 {
-        let ok = tz.iter().enumerate().filter(|(i, (x, l))| vote(x, Some(*i)).is_some_and(|p| p.key() == l.key())).count();
-        Some(ok as f64 / tz.len() as f64)
+    let preds = crate::kdtree::par_map(query.len(), |i| vote(&embed(&query[i]), None));
+    let acc = if train.len() > 1 {
+        let ok = crate::kdtree::par_map(train.len(), |i| vote(&pts[i], Some(i as u32)).is_some_and(|p| p.key() == train[i].1.key()));
+        Some(ok.iter().filter(|&&b| b).count() as f64 / train.len() as f64)
     } else {
         None
     };
     (preds, acc)
+}
+
+fn unit(p: P) -> [f64; 3] {
+    let (l, f) = (p.0.to_radians(), p.1.to_radians());
+    [f.cos() * l.cos(), f.cos() * l.sin(), f.sin()]
+}
+
+fn place_of(f: &Feature) -> P {
+    match f {
+        Feature::Place(p) => *p,
+        Feature::Num(_) => (0.0, 0.0),
+    }
+}
+
+fn num_of(f: &Feature) -> f64 {
+    match f {
+        Feature::Num(a) => *a,
+        Feature::Place(_) => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod knn_tests {
+    use super::*;
+
+    /// At 60° N a hundredth of a degree east is 556 m, eight thousandths north are 890 m:
+    /// the eastern points are nearer, although their difference in degrees is larger.
+    #[test]
+    fn places_are_compared_by_distance_on_the_sphere() {
+        let t = |p: P, l: &str| (vec![Feature::Place(p)], Value::Text(l.into()));
+        let mut train = Vec::new();
+        for i in 0..5 {
+            let o = i as f64 * 1e-5;
+            train.push(t((10.01 + o, 60.0), "east"));
+            train.push(t((10.0 + o, 60.008), "north"));
+        }
+        let (p, acc) = knn(&train, &[vec![Feature::Place((10.0, 60.0))]]);
+        assert_eq!(p.iter().map(|v| v.as_ref().map(|v| v.display())).collect::<Vec<_>>(), vec![Some("east".to_string())]);
+        assert_eq!(acc, Some(1.0));
+    }
 }

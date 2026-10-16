@@ -170,7 +170,7 @@ impl Knut {
     fn info<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let h = &self.r.header;
         let d = PyDict::new(py);
-        d.set_item("format", format!("{}.{}", h.format_major, h.format_minor))?;
+        d.set_item("format", format!("{}.{}.{}", h.version[0], h.version[1], h.version[2]))?;
         d.set_item("features", h.features)?;
         d.set_item("time_range", (h.tmin, h.tmax))?;
         d.set_item(

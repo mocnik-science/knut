@@ -29,6 +29,7 @@ zstd.workspace = true
 arrow-array.workspace = true
 arrow-schema.workspace = true
 arrow-buffer.workspace = true
+ratatui = "0.29"
 parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
 
 [dev-dependencies]

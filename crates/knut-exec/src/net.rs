@@ -207,9 +207,14 @@ impl Net {
     }
 
     fn cost(&self, e: &Edge, m: Mode, metric: Metric) -> Option<f64> {
+        self.cost_dir(e, m, metric, e.fwd)
+    }
+
+    /// Cost of an edge used along (`fwd`) or against the order of its way's nodes.
+    fn cost_dir(&self, e: &Edge, m: Mode, metric: Metric, fwd: bool) -> Option<f64> {
         let i = mode_idx(m);
         let p = &self.ways[e.way as usize].1;
-        if p.speed[i] <= 0.0 || (e.fwd && !p.fwd[i]) || (!e.fwd && !p.bwd[i]) {
+        if p.speed[i] <= 0.0 || (fwd && !p.fwd[i]) || (!fwd && !p.bwd[i]) {
             return None;
         }
         Some(match metric {
@@ -319,21 +324,119 @@ impl Net {
         (dist, label, pred)
     }
 
+    /// The highest speed of the mode in the network (m/s), for lower bounds of travel time.
+    pub fn max_speed(&self, m: Mode) -> f64 {
+        let i = mode_idx(m);
+        self.ways.iter().map(|w| w.1.speed[i] as f64).fold(0.0, f64::max)
+    }
+
+    /// Bidirectional A* by time from `s` to `t` with the straight-line distance at the highest
+    /// speed as estimate (average potentials, so that both searches stay exact). Returns the
+    /// cost and, per node, the edge it was reached by (forward search) or leads on (backward).
+    fn astar(&self, s: u32, t: u32, m: Mode) -> Option<(f64, Vec<(u32, u32)>)> {
+        let n = self.pts.len();
+        let vmax = self.max_speed(m).max(0.1);
+        let (ps, pt) = (self.pts[s as usize], self.pts[t as usize]);
+        // forward potential: (h(v, t) - h(s, v)) / 2; the backward one is its negative
+        let pot = |v: u32| (geom::haversine(self.pts[v as usize], pt) - geom::haversine(ps, self.pts[v as usize])) / (2.0 * vmax);
+        let mut df = vec![f64::INFINITY; n];
+        let mut dr = vec![f64::INFINITY; n];
+        let mut pf = vec![(u32::MAX, u32::MAX); n];
+        let mut pr = vec![(u32::MAX, u32::MAX); n];
+        let (mut hf, mut hr) = (BinaryHeap::new(), BinaryHeap::new());
+        df[s as usize] = 0.0;
+        dr[t as usize] = 0.0;
+        hf.push(St(pot(s), s));
+        hr.push(St(-pot(t), t));
+        let mut best = f64::INFINITY;
+        let mut meet = u32::MAX;
+        // keys: d + pot (forward), d - pot (backward); for consecutive nodes x, y of any
+        // shorter route, key(x) + key(y) would be below its cost, so the sum of the two
+        // smallest keys bounds every route not yet seen
+        loop {
+            let (kf, kr) = (hf.peek().map_or(f64::INFINITY, |x: &St| x.0), hr.peek().map_or(f64::INFINITY, |x: &St| x.0));
+            if !kf.is_finite() && !kr.is_finite() {
+                break;
+            }
+            if kf + kr >= best - 1e-9 {
+                break;
+            }
+            if kf <= kr {
+                let St(k, u) = hf.pop().unwrap();
+                if k > df[u as usize] + pot(u) + 1e-9 {
+                    continue;
+                }
+                for (j, e) in self.adj(u).iter().enumerate() {
+                    let Some(c) = self.cost(e, m, Metric::Time) else { continue };
+                    let nd = df[u as usize] + c;
+                    let v = e.to as usize;
+                    if nd < df[v] {
+                        df[v] = nd;
+                        pf[v] = (u, self.adj_off[u as usize] + j as u32);
+                        hf.push(St(nd + pot(e.to), e.to));
+                        if nd + dr[v] < best {
+                            best = nd + dr[v];
+                            meet = e.to;
+                        }
+                    }
+                }
+            } else {
+                let St(k, u) = hr.pop().unwrap();
+                if k > dr[u as usize] - pot(u) + 1e-9 {
+                    continue;
+                }
+                // edges v -> u: the edges of u in the other direction
+                for (j, e) in self.adj(u).iter().enumerate() {
+                    let Some(c) = self.cost_dir(e, m, Metric::Time, !e.fwd) else { continue };
+                    let nd = dr[u as usize] + c;
+                    let v = e.to as usize;
+                    if nd < dr[v] {
+                        dr[v] = nd;
+                        pr[v] = (u, self.adj_off[u as usize] + j as u32);
+                        hr.push(St(nd - pot(e.to), e.to));
+                        if df[v] + nd < best {
+                            best = df[v] + nd;
+                            meet = e.to;
+                        }
+                    }
+                }
+            }
+        }
+        if s == t {
+            return Some((0.0, pf));
+        }
+        if meet == u32::MAX {
+            return None;
+        }
+        // the forward predecessors up to `meet`, then the backward ones from there on
+        let mut chain = pf;
+        let mut cur = meet;
+        while cur != t {
+            let (next, ei) = pr[cur as usize];
+            if next == u32::MAX {
+                return None;
+            }
+            // the edge next -> cur, seen from next: the reverse of the stored one
+            let e = &self.edges[ei as usize];
+            let back = self.adj(e.to).iter().position(|x| x.to == next && x.way == e.way && x.fwd != e.fwd);
+            chain[next as usize] = (cur, back.map_or(ei, |k| self.adj_off[e.to as usize] + k as u32));
+            cur = next;
+        }
+        Some((best, chain))
+    }
+
     /// Shortest path by time: (length m, duration s, way ids, geometry).
     pub fn path(&self, a: P, b: P, m: Mode) -> Option<(f64, f64, Vec<i64>, Geom)> {
         let (sa, da) = self.snap(a, m)?;
         let (sb, db) = self.snap(b, m)?;
-        let (dist, _, pred) = self.search(&[(sa, 0.0, 0)], m, Metric::Time, f64::INFINITY);
-        if !dist[sb as usize].is_finite() {
-            return None;
-        }
+        let (cost, pred) = self.astar(sa, sb, m)?;
         let mut len = da + db;
         let speed = match m {
             Mode::Foot => 5.0 / 3.6,
             Mode::Bicycle => 15.0 / 3.6,
             _ => 30.0 / 3.6,
         };
-        let mut secs = dist[sb as usize] + (da + db) / speed;
+        let mut secs = cost + (da + db) / speed;
         let mut line = vec![b, self.pts[sb as usize]];
         let mut ways = Vec::new();
         let mut cur = sb;

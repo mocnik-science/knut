@@ -251,9 +251,10 @@ fn database() -> PathBuf {
     let scale: usize = std::env::var("KNUT_BENCH_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("knut-bench");
     std::fs::create_dir_all(&dir).unwrap();
-    // the generator version and the known format features are part of the name: a changed
+    // the generator version, the format version and the known features are part of the name: a changed
     // generator or format builds a new file
-    let path = dir.join(format!("town-v2-f{:x}-scale{scale}.knutdb", knut_format::layout::FEAT_KNOWN));
+    let v = knut_format::layout::FORMAT_VERSION;
+    let path = dir.join(format!("town-v2-{}.{}.{}-f{:x}-scale{scale}.knutdb", v[0], v[1], v[2], knut_format::layout::FEAT_KNOWN));
     if !path.exists() {
         let t = std::time::Instant::now();
         let data = town(scale);

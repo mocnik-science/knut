@@ -441,7 +441,7 @@ fn spill_mode_output_is_byte_identical() {
     }
     let out_mem = dir.join("mem.knutdb");
     let out_spill = dir.join("spill.knutdb");
-    let base = BuildOptions { block_size: 4096, ..Default::default() };
+    let base = BuildOptions { block_size: 4096, created: Some(0), ..Default::default() };
     knut_builder::build(&VecSource::new(data.clone()), &out_mem, &base, &|_| {}).unwrap();
     let tiny = BuildOptions { mem_budget: 0, tmp_dir: Some(dir.clone()), ..base };
     let st = knut_builder::build(&VecSource::new(data), &out_spill, &tiny, &|_| {}).unwrap();
@@ -455,5 +455,61 @@ fn spill_mode_output_is_byte_identical() {
         .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
         .collect();
     assert!(leftovers.is_empty(), "temporary files left: {leftovers:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Adding and removing an element, compacting: the data stays readable and identical.
+#[test]
+fn container_changes_keep_the_data() {
+    use knut::container;
+    use knut_format::container::{ElementKind, Temporal};
+    let dir = std::env::temp_dir().join(format!("knut-test-{}-container", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t.knutdb");
+    knut_builder::build(&VecSource::new(dataset()), &path, &small_blocks(), &|_| {}).unwrap();
+    let all = |p: &std::path::Path| {
+        let r = Reader::open(p).unwrap();
+        r.verify(true).unwrap();
+        let mut v: Vec<(ObjType, i64, u32)> = r
+            .snapshot(&BBox::WORLD, T0 + 400 * DAY, &Filter::default())
+            .unwrap()
+            .iter()
+            .map(|f| (f.obj_type, f.id, f.meta.version))
+            .collect();
+        v.sort();
+        v
+    };
+    let before = all(&path);
+    let h = container::header(&path).unwrap();
+    assert!(h.directory.elements.iter().all(|e| e.info().base));
+    assert_eq!(container::freeable(&path, &h).unwrap(), 0);
+    let n_base = h.directory.elements.len();
+
+    let sec = |b: &[u8]| container::NewSection { kind: 1000, flags: 0, bytes: b.to_vec() };
+    let id = container::add_element(&path, ElementKind::TagStatistics, Temporal::Latest, vec![], vec![sec(&[7; 100])]).unwrap();
+    let id2 = container::add_element(&path, ElementKind::PlaceIndex, Temporal::Monthly, vec![("a".into(), "b".into())], vec![sec(&[9; 50])]).unwrap();
+    assert_eq!((id, id2), (n_base as u32, n_base as u32 + 1));
+    let h = container::header(&path).unwrap();
+    assert_eq!(h.generation, 3);
+    assert_eq!(container::element_bytes(&path, h.directory.get(id2).unwrap()).unwrap(), vec![(1000, vec![9; 50])]);
+    assert_eq!(all(&path), before);
+
+    // the database itself cannot be removed
+    assert!(container::remove_element(&path, 0).is_err());
+    container::remove_element(&path, id).unwrap();
+    let h = container::header(&path).unwrap();
+    assert!(h.directory.get(id).is_none());
+    assert!(container::freeable(&path, &h).unwrap() >= 100);
+
+    let freed = container::compact(&path, &mut |_, _| {}).unwrap();
+    assert!(freed >= 100);
+    let h = container::header(&path).unwrap();
+    assert_eq!(container::freeable(&path, &h).unwrap(), 0);
+    assert_eq!(h.directory.elements.len(), n_base + 1);
+    assert_eq!(container::element_bytes(&path, h.directory.get(id2).unwrap()).unwrap(), vec![(1000, vec![9; 50])]);
+    assert_eq!(all(&path), before);
+    // ids are never reused
+    let id3 = container::add_element(&path, ElementKind::TagStatistics, Temporal::Latest, vec![], vec![]).unwrap();
+    assert_eq!(id3, id2 + 1);
     std::fs::remove_dir_all(&dir).ok();
 }

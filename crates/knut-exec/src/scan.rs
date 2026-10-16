@@ -68,6 +68,9 @@ pub struct ScanSpec {
     pub kinds: KindMask,
     pub time: TimeMode,
     pub region: Option<Arc<Region>>,
+    /// Only elements whose box intersects this box can match (prefilter from `within`,
+    /// `overlapping` and `near` in the condition).
+    pub bbox: Option<BBoxF>,
     /// Necessary condition on the tags (prefilter).
     pub pred: TagPred,
     pub need_geom: bool,
@@ -110,9 +113,22 @@ fn time_range(db: &Db, t: &TimeMode) -> (u32, u32) {
     }
 }
 
+fn intersection(a: &BBoxF, b: &BBoxF) -> BBoxF {
+    let r = BBoxF { minx: a.minx.max(b.minx), miny: a.miny.max(b.miny), maxx: a.maxx.min(b.maxx), maxy: a.maxy.min(b.maxy) };
+    if r.minx > r.maxx || r.miny > r.maxy { BBoxF::EMPTY } else { r }
+}
+
 /// Blocks that can contain matches, in ascending order.
 pub fn blocks(db: &Db, spec: &ScanSpec) -> R<Vec<u32>> {
-    let rb = spec.region.as_ref().map_or(knut_format::BBox::WORLD, |r| r.bbox().to_e7());
+    let rb = match (spec.region.as_ref().map(|r| r.bbox()), spec.bbox) {
+        (Some(a), Some(b)) => intersection(&a, &b),
+        (Some(a), None) | (None, Some(a)) => a,
+        (None, None) => BBoxF::WORLD,
+    };
+    if rb.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rb = rb.to_e7();
     let (t0, t1) = time_range(db, &spec.time);
     let private = want_private(spec);
     let hashes = bloom_hashes(db, &spec.pred);
@@ -318,15 +334,26 @@ fn priv_hist(id: i64, es: &[PrivEntry]) -> Arc<Hist> {
     Arc::new(Hist { otype: ObjType::Node, id, versions: es.iter().filter(|e| !e.continuation).map(ver_priv).collect() })
 }
 
+/// Blocks scanned together, sharing the lookup of node positions (see [`fold`]).
+const BLOCK_GROUP: usize = 1024;
+
 /// Scans one block. Elements of objects split over several segments go to `deferred`.
 pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) -> R<()>, deferred: &mut Vec<Deferred>) -> R<()> {
+    let cands = block_cands(db, spec, no, sink, deferred)?;
+    let resolved = resolve_shared(db, spec, &pending_nodes(spec, &cands))?;
+    emit_cands(db, spec, cands, &resolved, sink, deferred)
+}
+
+/// First part of a block scan: emits what is complete and returns the candidates whose
+/// geometry still needs nodes shared with other blocks.
+fn block_cands(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) -> R<()>, deferred: &mut Vec<Deferred>) -> R<Vec<Cand>> {
     let r = &db.reader;
     let entry = r.block_entry(no).map_err(rt_err)?;
     let ot = entry.obj_type;
     let private = ot == ObjType::Way && want_private(spec);
     let main = spec.kinds.visits(ot);
     if !main && !private {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let header = r.block_header(no).map_err(rt_err)?;
     let cover = match &spec.region {
@@ -334,7 +361,7 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
         None => Cover::Inside,
     };
     if cover == Cover::Outside {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let history = matches!(spec.time, TimeMode::History);
     let needs_nodes = ot == ObjType::Way && (spec.kinds.area || spec.kinds.any);
@@ -380,6 +407,12 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
             }
         }
         let seg_box = BBoxF::from_e7(&d.bbox);
+        if let Some(h) = &spec.bbox
+            && s.flags & SEG_NO_BBOX == 0
+            && !seg_box.intersects(h)
+        {
+            continue;
+        }
         let seg_cover = match (&spec.region, cover) {
             (_, Cover::Inside) => Cover::Inside,
             (Some(reg), _) if !b.attr_only && s.flags & SEG_NO_BBOX == 0 => reg.cover(&seg_box),
@@ -412,6 +445,12 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
                     if e.visible
                         && let Some(reg) = &spec.region
                         && !reg.contains(geom::e7((e.lon, e.lat)))
+                    {
+                        continue;
+                    }
+                    if e.visible
+                        && let Some(h) = &spec.bbox
+                        && !h.contains(geom::e7((e.lon, e.lat)))
                     {
                         continue;
                     }
@@ -496,9 +535,13 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
             }
         }
     }
-    // shared node positions for ways that need geometry
+    Ok(cands)
+}
+
+/// Shared nodes (stored in node blocks) whose positions the candidates' geometry needs.
+fn pending_nodes(spec: &ScanSpec, cands: &[Cand]) -> Vec<(i64, i64)> {
     let mut pending: Vec<(i64, i64)> = Vec::new();
-    for c in &cands {
+    for c in cands {
         if let Some(l) = &c.local
             && (spec.need_geom || c.partial)
         {
@@ -509,7 +552,11 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
             }
         }
     }
-    let resolved = if pending.is_empty() {
+    pending
+}
+
+fn resolve_shared(db: &Db, spec: &ScanSpec, pending: &[(i64, i64)]) -> R<HashMap<(i64, i64), Option<(i32, i32)>>> {
+    Ok(if pending.is_empty() {
         HashMap::default()
     } else if let TimeMode::State(t) = spec.time {
         let ids: Vec<i64> = pending.iter().map(|p| p.0).collect();
@@ -520,8 +567,30 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
             .map(|(id, p)| ((id, t), p))
             .collect::<HashMap<(i64, i64), Option<(i32, i32)>>>()
     } else {
-        db.positions(&pending)
-    };
+        db.positions(pending)
+    })
+}
+
+/// Last part of a block scan: completes the candidates' geometry and emits them.
+fn emit_cands(
+    db: &Db,
+    spec: &ScanSpec,
+    cands: Vec<Cand>,
+    resolved: &HashMap<(i64, i64), Option<(i32, i32)>>,
+    sink: &mut dyn FnMut(Item) -> R<()>,
+    deferred: &mut Vec<Deferred>,
+) -> R<()> {
+    // relations of the block that need their geometry: all members in one lookup
+    if spec.need_geom {
+        let rels: Vec<&Cand> = cands.iter().filter(|c| c.local.is_none() && c.elem.otype == Some(ObjType::Relation)).collect();
+        if !rels.is_empty() {
+            let reqs: Vec<(bool, &[Member], i64)> =
+                rels.iter().map(|c| (c.elem.kind == EKind::Area, &c.elem.v.members[..], c.elem.at)).collect();
+            for (c, g) in rels.iter().zip(db.relation_geoms(&reqs)) {
+                let _ = c.elem.geom.set(Arc::new(g));
+            }
+        }
+    }
     for c in cands {
         let needs = spec.need_geom || c.partial;
         if needs {
@@ -542,13 +611,6 @@ pub fn scan_block(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) 
                     Geom::Poly(vec![Polygon { outer: ring, holes: vec![] }])
                 } else {
                     Geom::Line(pts)
-                };
-                let _ = c.elem.geom.set(Arc::new(g));
-            } else if c.elem.otype == Some(ObjType::Relation) && spec.need_geom {
-                let g = if c.elem.kind == EKind::Area {
-                    db.area_geom(&c.elem.v.members, c.elem.at)
-                } else {
-                    db.relation_geom(&c.elem.v.members, c.elem.at)
                 };
                 let _ = c.elem.geom.set(Arc::new(g));
             }
@@ -679,21 +741,39 @@ pub fn fold<A: Send>(
     if let Some(c) = ctl {
         c.add_blocks(bl.len() as u64);
     }
-    let parts: Vec<(A, Vec<Deferred>, Option<RtErr>)> = bl
-        .par_iter()
-        .map(|&no| {
-            let mut acc = init();
-            let mut def = Vec::new();
-            if ctl.is_some_and(|c| c.is_cancelled()) {
-                return (acc, def, Some(crate::eval::cancelled()));
-            }
-            let r = scan_block(db, spec, no, &mut |it| step(&mut acc, it), &mut def);
+    // Blocks go in groups: the nodes that ways share with other blocks are looked up once per
+    // group, so that each node block is decoded once per group instead of once per way block.
+    let mut parts: Vec<(A, Vec<Deferred>, Option<RtErr>)> = Vec::with_capacity(bl.len());
+    for group in bl.chunks(BLOCK_GROUP) {
+        let firsts: Vec<(A, Vec<Deferred>, Vec<Cand>, Option<RtErr>)> = group
+            .par_iter()
+            .map(|&no| {
+                let mut acc = init();
+                let mut def = Vec::new();
+                if ctl.is_some_and(|c| c.is_cancelled()) {
+                    return (acc, def, Vec::new(), Some(crate::eval::cancelled()));
+                }
+                match block_cands(db, spec, no, &mut |it| step(&mut acc, it), &mut def) {
+                    Ok(c) => (acc, def, c, None),
+                    Err(e) => (acc, def, Vec::new(), Some(e)),
+                }
+            })
+            .collect();
+        let mut pending: Vec<(i64, i64)> = firsts.iter().flat_map(|f| pending_nodes(spec, &f.2)).collect();
+        pending.sort_unstable();
+        pending.dedup();
+        let resolved = resolve_shared(db, spec, &pending)?;
+        parts.par_extend(firsts.into_par_iter().map(|(mut acc, mut def, cands, err)| {
+            let err = match err {
+                Some(e) => Some(e),
+                None => emit_cands(db, spec, cands, &resolved, &mut |it| step(&mut acc, it), &mut def).err(),
+            };
             if let Some(c) = ctl {
                 c.block_done();
             }
-            (acc, def, r.err())
-        })
-        .collect();
+            (acc, def, err)
+        }));
+    }
     let mut accs = Vec::with_capacity(parts.len() + 1);
     let mut defs = Vec::new();
     let mut errs = Vec::new();

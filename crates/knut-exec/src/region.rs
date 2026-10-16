@@ -181,7 +181,83 @@ pub enum Region {
     Box(BBoxF),
     Geom { geom: Arc<Geom>, bbox: BBoxF, label: String },
     Raster(Raster),
-    Union(Vec<Arc<Region>>, BBoxF, String),
+    Union(Union),
+}
+
+/// Several regions together (`within (areas p with …)`), with a grid over their boxes so that
+/// a point or block is tested only against the regions near it.
+#[derive(Debug)]
+pub struct Union {
+    pub parts: Vec<Arc<Region>>,
+    pub bbox: BBoxF,
+    pub label: String,
+    grid: std::sync::OnceLock<PartGrid>,
+}
+
+#[derive(Debug)]
+struct PartGrid {
+    cell: f64,
+    cells: FxHashMap<(i32, i32), Vec<u32>>,
+    /// parts spanning many cells: always tested
+    big: Vec<u32>,
+}
+
+impl Union {
+    pub fn new(parts: Vec<Arc<Region>>, bbox: BBoxF, label: String) -> Union {
+        Union { parts, bbox, label, grid: Default::default() }
+    }
+
+    fn grid(&self) -> &PartGrid {
+        self.grid.get_or_init(|| {
+            let boxes: Vec<BBoxF> = self.parts.iter().map(|r| r.bbox()).collect();
+            let mut sizes: Vec<f64> = boxes.iter().filter(|b| !b.is_empty()).map(|b| (b.maxx - b.minx).max(b.maxy - b.miny)).collect();
+            sizes.sort_by(f64::total_cmp);
+            let cell = sizes.get(sizes.len() / 2).copied().unwrap_or(1.0).max(1e-4) * 2.0;
+            let mut cells: FxHashMap<(i32, i32), Vec<u32>> = FxHashMap::default();
+            let mut big = Vec::new();
+            for (i, b) in boxes.iter().enumerate() {
+                if b.is_empty() {
+                    continue;
+                }
+                let (x0, y0, x1, y1) = cell_range(b, cell);
+                if (x1 - x0 + 1) as i64 * (y1 - y0 + 1) as i64 > 64 {
+                    big.push(i as u32);
+                    continue;
+                }
+                for x in x0..=x1 {
+                    for y in y0..=y1 {
+                        cells.entry((x, y)).or_default().push(i as u32);
+                    }
+                }
+            }
+            PartGrid { cell, cells, big }
+        })
+    }
+
+    /// The parts whose box can intersect `b`.
+    fn near(&self, b: &BBoxF) -> Vec<u32> {
+        let g = self.grid();
+        let (x0, y0, x1, y1) = cell_range(b, g.cell);
+        if (x1 - x0 + 1) as i64 * (y1 - y0 + 1) as i64 > 4096 {
+            return (0..self.parts.len() as u32).collect();
+        }
+        let mut out: Vec<u32> = g.big.clone();
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                if let Some(v) = g.cells.get(&(x, y)) {
+                    out.extend(v);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
+fn cell_range(b: &BBoxF, cell: f64) -> (i32, i32, i32, i32) {
+    let f = |v: f64| (v / cell).floor().clamp(-1e9, 1e9) as i32;
+    (f(b.minx), f(b.miny), f(b.maxx), f(b.maxy))
 }
 
 impl Region {
@@ -196,7 +272,7 @@ impl Region {
             Region::Box(b) => *b,
             Region::Geom { bbox, .. } => *bbox,
             Region::Raster(r) => r.bbox,
-            Region::Union(_, b, _) => *b,
+            Region::Union(u) => u.bbox,
         }
     }
 
@@ -206,7 +282,7 @@ impl Region {
             Region::Box(b) => format!("{}...{}, {}...{}", b.minx, b.maxx, b.miny, b.maxy),
             Region::Geom { label, .. } => label.clone(),
             Region::Raster(r) => format!("isochrone ({} cells)", r.cells.len()),
-            Region::Union(_, _, l) => l.clone(),
+            Region::Union(u) => u.label.clone(),
         }
     }
 
@@ -216,7 +292,9 @@ impl Region {
             Region::Box(b) => b.contains(p),
             Region::Geom { geom, bbox, .. } => bbox.contains(p) && geom.contains_point(p),
             Region::Raster(r) => r.bbox.contains(p) && r.contains(p),
-            Region::Union(rs, b, _) => b.contains(p) && rs.iter().any(|r| r.contains(p)),
+            Region::Union(u) => {
+                u.bbox.contains(p) && u.near(&BBoxF { minx: p.0, miny: p.1, maxx: p.0, maxy: p.1 }).iter().any(|&i| u.parts[i as usize].contains(p))
+            }
         }
     }
 
@@ -257,13 +335,13 @@ impl Region {
                     Cover::Outside
                 }
             }
-            Region::Union(rs, bb, _) => {
-                if !bb.intersects(b) {
+            Region::Union(u) => {
+                if !u.bbox.intersects(b) {
                     return Cover::Outside;
                 }
                 let mut any_partial = false;
-                for r in rs {
-                    match r.cover(b) {
+                for i in u.near(b) {
+                    match u.parts[i as usize].cover(b) {
                         Cover::Inside => return Cover::Inside,
                         Cover::Partial => any_partial = true,
                         Cover::Outside => {}
@@ -280,7 +358,7 @@ impl Region {
             Region::Box(b) => b.area_km2() * 1e6,
             Region::Geom { geom, .. } => geom.area_m2(),
             Region::Raster(r) => r.cells.len() as f64 * r.size * r.size,
-            Region::Union(rs, _, _) => rs.iter().map(|r| r.area_m2()).sum(),
+            Region::Union(u) => u.parts.iter().map(|r| r.area_m2()).sum(),
         }
     }
 
@@ -288,7 +366,7 @@ impl Region {
     pub fn display_geom(&self) -> Geom {
         match self {
             Region::Raster(r) => Geom::Poly(r.outline()),
-            Region::Union(rs, _, _) => Geom::Multi(rs.iter().map(|r| r.display_geom()).collect()),
+            Region::Union(u) => Geom::Multi(u.parts.iter().map(|r| r.display_geom()).collect()),
             _ => self.geom(),
         }
     }
@@ -317,7 +395,7 @@ impl Region {
                         .collect(),
                 )
             }
-            Region::Union(rs, _, _) => Geom::Multi(rs.iter().map(|r| r.geom()).collect()),
+            Region::Union(u) => Geom::Multi(u.parts.iter().map(|r| r.geom()).collect()),
         }
     }
 }

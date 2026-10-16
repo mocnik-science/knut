@@ -389,7 +389,6 @@ struct Out {
     w: BufWriter<File>,
     pos: u64,
     sections: Vec<SectionEntry>,
-    checksums: Vec<u64>,
     stream: Option<(u32, u64, Xxh3)>,
 }
 
@@ -412,8 +411,7 @@ impl Out {
         self.align()?;
         let offset = self.pos;
         self.write(bytes)?;
-        self.sections.push(SectionEntry { kind: kind as u32, flags, offset, length: bytes.len() as u64 });
-        self.checksums.push(xxh3_64(bytes));
+        self.sections.push(SectionEntry { kind: kind as u32, flags, offset, length: bytes.len() as u64, checksum: xxh3_64(bytes) });
         Ok(())
     }
 
@@ -430,8 +428,7 @@ impl Out {
 
     fn end_stream(&mut self) {
         let (kind, offset, h) = self.stream.take().expect("stream open");
-        self.sections.push(SectionEntry { kind, flags: 0, offset, length: self.pos - offset });
-        self.checksums.push(h.digest());
+        self.sections.push(SectionEntry { kind, flags: 0, offset, length: self.pos - offset, checksum: h.digest() });
     }
 }
 
@@ -710,7 +707,7 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
 
     // file
     let f = File::create(path)?;
-    let mut out = Out { w: BufWriter::with_capacity(8 << 20, f), pos: 0, sections: Vec::new(), checksums: Vec::new(), stream: None };
+    let mut out = Out { w: BufWriter::with_capacity(8 << 20, f), pos: 0, sections: Vec::new(), stream: None };
     out.write(&[0u8; HEADER_SIZE])?;
     out.zsection(SectionKind::Keys, &encode_strings(&dicts.keys), 19)?;
     out.zsection(SectionKind::Values, &encode_strings(&dicts.values), 19)?;
@@ -737,7 +734,9 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
         row_bytes >> 20,
         spilled >> 20
     ));
-    out.begin_stream(SectionKind::Blocks)?;
+    // one section per kind of block (nodes, ways, relations, large objects): blocks come
+    // in that order
+    let mut stream_kind: Option<SectionKind> = None;
     let mut block_table = Vec::new();
     // per block filters: word offsets and words
     let mut filter_offsets: Vec<u32> = vec![0];
@@ -802,6 +801,19 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
         batch.clear();
         for e in encoded {
             let e = e?;
+            let kind = match e.section {
+                0 => SectionKind::BlocksNode,
+                1 => SectionKind::BlocksWay,
+                2 => SectionKind::BlocksRelation,
+                _ => SectionKind::BlocksLarge,
+            };
+            if stream_kind != Some(kind) {
+                if stream_kind.is_some() {
+                    out.end_stream();
+                }
+                out.begin_stream(kind)?;
+                stream_kind = Some(kind);
+            }
             let offset = out.pos;
             out.write(&e.bytes)?;
             BlockEntry {
@@ -823,7 +835,9 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
             block_no += 1;
         }
     }
-    out.end_stream();
+    if stream_kind.is_some() {
+        out.end_stream();
+    }
     drop(stream);
     stats.n_blocks = block_no as u64;
     log(&format!("wrote {} blocks ({:.1}s)", block_no, t1.elapsed().as_secs_f64()));
@@ -904,12 +918,15 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
     );
     out.section(SectionKind::Meta, 0, meta.as_bytes())?;
 
+    // the directory of elements, then both header slots
+    let created = opt.created.unwrap_or_else(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0));
+    let directory = knut_format::container::base_directory(&out.sections, created);
+    let dir_bytes = directory.to_bytes();
     out.align()?;
-    let footer = footer_bytes(&out.checksums);
-    out.write(&footer)?;
+    let dir_offset = out.pos;
+    out.write(&dir_bytes)?;
     let header = Header {
-        format_major: FORMAT_MAJOR,
-        format_minor: FORMAT_MINOR,
+        version: FORMAT_VERSION,
         features,
         time_base: tb,
         tmin: stats.tmin,
@@ -919,6 +936,10 @@ pub(crate) fn write(c: Collected, path: &Path, opt: &BuildOptions, log: &(dyn Fn
         n_versions: stats.n_versions,
         n_segments: stats.n_segments,
         n_blocks: stats.n_blocks,
+        generation: 1,
+        dir_offset,
+        dir_length: dir_bytes.len() as u64,
+        directory,
         sections: out.sections.clone(),
     };
     out.w.flush()?;

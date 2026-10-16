@@ -189,3 +189,33 @@ fn results_do_not_depend_on_threads() {
     };
     assert_eq!(strip(&one_thread), strip(&many));
 }
+
+/// The place index and the tag statistics give the same answers as the scans they replace.
+#[test]
+fn indexes_answer_like_the_scans() {
+    use knut_exec::indexes::{self, Progress};
+    use knut_format::container::{ElementKind, Temporal};
+    let scripts = [
+        "count of nodes n with n:amenity=bench within Mitte",
+        "count of nodes n with n:amenity=bench within 'mitte'",
+        "count of keys",
+        "(pick key k with k.name == 'amenity').count",
+        "(pick key k with k.name == 'amenity').values",
+    ];
+    let plain = db_copy("indexes-plain");
+    let indexed = db_copy("indexes");
+    for k in [ElementKind::PlaceIndex, ElementKind::TagStatistics] {
+        indexes::add(&indexed, k, Temporal::Latest, &Progress::default()).unwrap();
+    }
+    let h = knut::container::header(&indexed).unwrap();
+    assert!(h.directory.elements.iter().any(|e| e.kind == ElementKind::PlaceIndex));
+    for s in scripts {
+        assert_eq!(values_on(&indexed, s), values_on(&plain, s), "{s}");
+    }
+    // ambiguous and unknown names behave as before
+    for s in ["count of nodes n within Springfield", "count of nodes n within Nowhere"] {
+        let a = run_on(&indexed, s, knut_exec::Format::Text, None);
+        let b = run_on(&plain, s, knut_exec::Format::Text, None);
+        assert_eq!((a.code, a.err.lines().next().map(str::to_string)), (b.code, b.err.lines().next().map(str::to_string)), "{s}");
+    }
+}

@@ -9,12 +9,16 @@ use xxhash_rust::xxh3::xxh3_64;
 
 pub const MAGIC: [u8; 8] = *b"KNUT\0\r\n\x1a";
 pub const FOOTER_MAGIC: [u8; 8] = *b"KNUTEND\0";
-pub const FORMAT_MAJOR: u32 = 1;
-pub const FORMAT_MINOR: u32 = 0;
+/// Format version (major, minor, patch).
+pub const FORMAT_VERSION: [u16; 3] = [0, 1, 0];
+/// Two header slots of [`HEADER_SLOT`] bytes; the valid one with the higher generation counts.
 pub const HEADER_SIZE: usize = 1024;
-pub const MAX_SECTIONS: usize = 24;
-const SECTION_TABLE_OFF: usize = 136;
-const HEADER_CHECKSUM_OFF: usize = 1016;
+pub const HEADER_SLOT: usize = 512;
+const HEADER_CHECKSUM_OFF: usize = HEADER_SLOT - 8;
+// legacy format 1.0 (only read, by `knut manage … upgrade`)
+const LEGACY_MAX_SECTIONS: usize = 24;
+const LEGACY_SECTION_TABLE_OFF: usize = 136;
+const LEGACY_CHECKSUM_OFF: usize = 1016;
 
 pub const FEAT_PRIVATE_META: u64 = 1 << 0;
 pub const FEAT_USERS: u64 = 1 << 1;
@@ -47,6 +51,14 @@ pub enum SectionKind {
     IdxRel = 13,
     Meta = 14,
     BlockBlooms = 15,
+    /// Data blocks of nodes, ways, relations and large objects (format 0.1: one section
+    /// each instead of `Blocks`).
+    BlocksNode = 16,
+    BlocksWay = 17,
+    BlocksRelation = 18,
+    BlocksLarge = 19,
+    /// Sections of optional indexes (container elements) start here.
+    Index = 1000,
 }
 
 impl SectionKind {
@@ -68,6 +80,11 @@ impl SectionKind {
             13 => IdxRel,
             14 => Meta,
             15 => BlockBlooms,
+            16 => BlocksNode,
+            17 => BlocksWay,
+            18 => BlocksRelation,
+            19 => BlocksLarge,
+            1000 => Index,
             _ => return None,
         })
     }
@@ -95,12 +112,13 @@ pub struct SectionEntry {
     pub flags: u32,
     pub offset: u64,
     pub length: u64,
+    /// xxh3 of the section's bytes.
+    pub checksum: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Header {
-    pub format_major: u32,
-    pub format_minor: u32,
+    pub version: [u16; 3],
     pub features: u64,
     pub time_base: i64,
     pub tmin: i64,
@@ -110,16 +128,23 @@ pub struct Header {
     pub n_versions: [u64; 3],
     pub n_segments: u64,
     pub n_blocks: u64,
+    /// Incremented by every change of the container; the slot with the higher one counts.
+    pub generation: u64,
+    pub dir_offset: u64,
+    pub dir_length: u64,
+    pub directory: crate::container::Directory,
+    /// The sections of all elements.
     pub sections: Vec<SectionEntry>,
 }
 
 impl Header {
-    pub fn to_bytes(&self) -> Vec<u8> {
-        assert!(self.sections.len() <= MAX_SECTIONS);
-        let mut b = vec![0u8; HEADER_SIZE];
+    /// One header slot ([`HEADER_SLOT`] bytes).
+    pub fn slot_bytes(&self) -> Vec<u8> {
+        let mut b = vec![0u8; HEADER_SLOT];
         b[0..8].copy_from_slice(&MAGIC);
-        put32(&mut b, 8, self.format_major);
-        put32(&mut b, 12, self.format_minor);
+        for (i, v) in self.version.iter().enumerate() {
+            b[8 + 2 * i..10 + 2 * i].copy_from_slice(&v.to_le_bytes());
+        }
         put64(&mut b, 16, self.features);
         put64(&mut b, 24, self.time_base as u64);
         put64(&mut b, 32, self.tmin as u64);
@@ -131,52 +156,109 @@ impl Header {
         }
         put64(&mut b, 112, self.n_segments);
         put64(&mut b, 120, self.n_blocks);
-        put32(&mut b, 128, self.sections.len() as u32);
-        for (i, s) in self.sections.iter().enumerate() {
-            let o = SECTION_TABLE_OFF + 32 * i;
-            put32(&mut b, o, s.kind);
-            put32(&mut b, o + 4, s.flags);
-            put64(&mut b, o + 8, s.offset);
-            put64(&mut b, o + 16, s.length);
-        }
+        put64(&mut b, 128, self.generation);
+        put64(&mut b, 136, self.dir_offset);
+        put64(&mut b, 144, self.dir_length);
         let cs = xxh3_64(&b[..HEADER_CHECKSUM_OFF]);
         put64(&mut b, HEADER_CHECKSUM_OFF, cs);
         b
     }
 
-    /// Parses and validates the header (magic, version, checksum, section bounds).
-    pub fn parse(buf: &[u8], file_len: u64) -> Result<Header> {
-        let b = le::slice(buf, 0, HEADER_SIZE)?;
+    /// Both slots, for a new file.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let s = self.slot_bytes();
+        [s.clone(), s].concat()
+    }
+
+    fn parse_slot(b: &[u8]) -> Result<Header> {
         if b[0..8] != MAGIC {
             return Err(Error::BadMagic("header"));
         }
-        let cs = le::u64(b, HEADER_CHECKSUM_OFF)?;
-        if xxh3_64(&b[..HEADER_CHECKSUM_OFF]) != cs {
+        if xxh3_64(&b[..HEADER_CHECKSUM_OFF]) != le::u64(b, HEADER_CHECKSUM_OFF)? {
             return Err(Error::Checksum("header".into()));
         }
-        let format_major = le::u32(b, 8)?;
-        if format_major != FORMAT_MAJOR {
-            return Err(Error::Unsupported(format!("format major version {format_major}")));
+        let v = |i: usize| u16::from_le_bytes([b[8 + 2 * i], b[9 + 2 * i]]);
+        let version = [v(0), v(1), v(2)];
+        if version[0] != FORMAT_VERSION[0] || version[1] > FORMAT_VERSION[1] {
+            return Err(Error::Unsupported(format!("format version {}.{}.{}", version[0], version[1], version[2])));
         }
         let features = le::u64(b, 16)?;
         if features & FEAT_INCOMPATIBLE_MASK & !FEAT_KNOWN != 0 {
             return Err(Error::Unsupported(format!("feature flags {features:#x}")));
         }
+        let mut n_objects = [0u64; 3];
+        let mut n_versions = [0u64; 3];
+        for i in 0..3 {
+            n_objects[i] = le::u64(b, 64 + 8 * i)?;
+            n_versions[i] = le::u64(b, 88 + 8 * i)?;
+        }
+        Ok(Header {
+            version,
+            features,
+            time_base: le::i64(b, 24)?,
+            tmin: le::i64(b, 32)?,
+            tmax: le::i64(b, 40)?,
+            bbox: get_bbox(b, 48)?,
+            n_objects,
+            n_versions,
+            n_segments: le::u64(b, 112)?,
+            n_blocks: le::u64(b, 120)?,
+            generation: le::u64(b, 128)?,
+            dir_offset: le::u64(b, 136)?,
+            dir_length: le::u64(b, 144)?,
+            directory: Default::default(),
+            sections: Vec::new(),
+        })
+    }
+
+    /// Parses the newer valid header slot and the directory it points to.
+    pub fn parse(buf: &[u8], file_len: u64) -> Result<Header> {
+        let b = le::slice(buf, 0, HEADER_SIZE)?;
+        if b[0..8] == MAGIC && le::u32(b, 8)? == 1 {
+            return Err(Error::Unsupported("format 1.0; convert it with `knut manage FILE upgrade`".into()));
+        }
+        let slots = [Self::parse_slot(&b[..HEADER_SLOT]), Self::parse_slot(&b[HEADER_SLOT..])];
+        let mut h = match slots {
+            [Ok(a), Ok(c)] => if c.generation > a.generation { c } else { a },
+            [Ok(a), Err(_)] | [Err(_), Ok(a)] => a,
+            [Err(e), Err(_)] => return Err(e),
+        };
+        let end = h.dir_offset.checked_add(h.dir_length).ok_or_else(|| corrupt("directory"))?;
+        if end > file_len || h.dir_offset < HEADER_SIZE as u64 {
+            return Err(corrupt("directory out of bounds"));
+        }
+        h.directory = crate::container::Directory::parse(le::slice(buf, h.dir_offset as usize, h.dir_length as usize)?, file_len)?;
+        h.sections = h.directory.elements.iter().flat_map(|e| e.sections.iter().copied()).collect();
+        Ok(h)
+    }
+
+    pub fn section(&self, kind: SectionKind) -> Option<&SectionEntry> {
+        self.sections.iter().find(|s| s.kind == kind as u32)
+    }
+
+    /// Reads a file of format 1.0: its header fields and its sections with the checksums
+    /// from its footer (for the conversion to format 0.1).
+    pub fn parse_legacy(buf: &[u8], file_len: u64) -> Result<Header> {
+        let b = le::slice(buf, 0, HEADER_SIZE)?;
+        if b[0..8] != MAGIC || le::u32(b, 8)? != 1 {
+            return Err(Error::Unsupported("not a file of format 1.0".into()));
+        }
+        if xxh3_64(&b[..LEGACY_CHECKSUM_OFF]) != le::u64(b, LEGACY_CHECKSUM_OFF)? {
+            return Err(Error::Checksum("header".into()));
+        }
         let n_sections = le::u32(b, 128)? as usize;
-        if n_sections > MAX_SECTIONS {
+        if n_sections > LEGACY_MAX_SECTIONS {
             return Err(corrupt("too many sections"));
         }
+        let sums = parse_footer(buf)?;
+        if sums.len() != n_sections {
+            return Err(corrupt("footer section count mismatch"));
+        }
         let mut sections = Vec::with_capacity(n_sections);
-        for i in 0..n_sections {
-            let o = SECTION_TABLE_OFF + 32 * i;
-            let s = SectionEntry {
-                kind: le::u32(b, o)?,
-                flags: le::u32(b, o + 4)?,
-                offset: le::u64(b, o + 8)?,
-                length: le::u64(b, o + 16)?,
-            };
-            let end = s.offset.checked_add(s.length).ok_or_else(|| corrupt("section overflow"))?;
-            if end > file_len || s.offset < HEADER_SIZE as u64 {
+        for (i, &checksum) in sums.iter().enumerate() {
+            let o = LEGACY_SECTION_TABLE_OFF + 32 * i;
+            let s = SectionEntry { kind: le::u32(b, o)?, flags: le::u32(b, o + 4)?, offset: le::u64(b, o + 8)?, length: le::u64(b, o + 16)?, checksum };
+            if s.offset.checked_add(s.length).is_none_or(|e| e > file_len) || s.offset < HEADER_SIZE as u64 {
                 return Err(corrupt(format!("section {} out of bounds", s.kind)));
             }
             sections.push(s);
@@ -188,9 +270,8 @@ impl Header {
             n_versions[i] = le::u64(b, 88 + 8 * i)?;
         }
         Ok(Header {
-            format_major,
-            format_minor: le::u32(b, 12)?,
-            features,
+            version: [1, le::u32(b, 12)? as u16, 0],
+            features: le::u64(b, 16)?,
             time_base: le::i64(b, 24)?,
             tmin: le::i64(b, 32)?,
             tmax: le::i64(b, 40)?,
@@ -199,27 +280,16 @@ impl Header {
             n_versions,
             n_segments: le::u64(b, 112)?,
             n_blocks: le::u64(b, 120)?,
+            generation: 0,
+            dir_offset: 0,
+            dir_length: 0,
+            directory: Default::default(),
             sections,
         })
     }
-
-    pub fn section(&self, kind: SectionKind) -> Option<&SectionEntry> {
-        self.sections.iter().find(|s| s.kind == kind as u32)
-    }
 }
 
-pub fn footer_bytes(checksums: &[u64]) -> Vec<u8> {
-    let mut b = Vec::with_capacity(checksums.len() * 8 + 16);
-    for c in checksums {
-        b.extend_from_slice(&c.to_le_bytes());
-    }
-    b.extend_from_slice(&(checksums.len() as u32).to_le_bytes());
-    b.extend_from_slice(&0u32.to_le_bytes());
-    b.extend_from_slice(&FOOTER_MAGIC);
-    b
-}
-
-/// Returns the per-section checksums stored in the footer.
+/// Returns the per-section checksums stored in the footer of a file of format 1.0.
 pub fn parse_footer(buf: &[u8]) -> Result<Vec<u64>> {
     if buf.len() < 16 {
         return Err(Error::Truncated("footer"));
@@ -229,7 +299,7 @@ pub fn parse_footer(buf: &[u8]) -> Result<Vec<u64>> {
         return Err(Error::BadMagic("footer"));
     }
     let n = le::u32(buf, end - 16)? as usize;
-    if n > MAX_SECTIONS {
+    if n > LEGACY_MAX_SECTIONS {
         return Err(corrupt("footer section count"));
     }
     let start = end - 16 - 8 * n;
@@ -475,9 +545,10 @@ mod tests {
 
     #[test]
     fn header_roundtrip() {
-        let h = Header {
-            format_major: FORMAT_MAJOR,
-            format_minor: FORMAT_MINOR,
+        let d = crate::container::Directory { next_id: 1, elements: vec![] };
+        let db = d.to_bytes();
+        let mut h = Header {
+            version: FORMAT_VERSION,
             features: FEAT_PRIVATE_META | FEAT_USERS,
             time_base: 946_684_800,
             tmin: 1,
@@ -487,13 +558,23 @@ mod tests {
             n_versions: [4, 5, 6],
             n_segments: 7,
             n_blocks: 8,
-            sections: vec![SectionEntry { kind: 1, flags: 1, offset: 1024, length: 10 }],
+            generation: 1,
+            dir_offset: HEADER_SIZE as u64,
+            dir_length: db.len() as u64,
+            directory: d,
+            sections: vec![],
         };
-        let b = h.to_bytes();
-        assert_eq!(Header::parse(&b, 2000).unwrap(), h);
-        let mut bad = b.clone();
-        bad[20] ^= 1;
-        assert!(Header::parse(&bad, 2000).is_err());
-        assert!(Header::parse(&b, 1030).is_err());
+        let mut file = h.to_bytes();
+        file.extend_from_slice(&db);
+        assert_eq!(Header::parse(&file, file.len() as u64).unwrap(), h);
+        // a newer generation in the second slot wins; a damaged slot is ignored
+        h.generation = 2;
+        h.n_blocks = 9;
+        file[HEADER_SLOT..HEADER_SIZE].copy_from_slice(&h.slot_bytes());
+        assert_eq!(Header::parse(&file, file.len() as u64).unwrap().n_blocks, 9);
+        file[HEADER_SLOT + 20] ^= 1;
+        assert_eq!(Header::parse(&file, file.len() as u64).unwrap().n_blocks, 8);
+        file[20] ^= 1;
+        assert!(Header::parse(&file, file.len() as u64).is_err());
     }
 }

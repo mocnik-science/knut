@@ -170,3 +170,43 @@ fn network_errors() {
     let r = fails("benches = nodes n with n:amenity=bench\nb = pick node n with n:shop\npath P from benches to b by foot", "E108");
     assert!(r.err.contains("single place"), "{}", r.err);
 }
+
+/// The stored routing network, with CH and with CCH, routes like the network built for
+/// the query.
+#[test]
+fn stored_routing_network_and_hierarchies() {
+    use knut_exec::indexes::{self, Progress};
+    use knut_format::container::{ElementKind, Temporal};
+    let script = "a = pick node n with n:amenity=bench\n\
+                  b = the n in (nodes x with x:amenity=bench) with n.id == 10\n\
+                  p = path P from a to b by foot\n\
+                  p.length\n\
+                  p.duration\n\
+                  (path P from a to b by car).duration\n\
+                  (isochrone I from a closer than 5 min by foot).area";
+    let plain = values_on(&db_copy("routing-plain"), script);
+    let mut variants = Vec::new();
+    for extra in [None, Some(ElementKind::RoutingCh), Some(ElementKind::RoutingCch)] {
+        let d = db_copy(&format!("routing-{extra:?}"));
+        indexes::add(&d, ElementKind::RoutingNetwork, Temporal::Latest, &Progress::default()).unwrap();
+        if let Some(k) = extra {
+            indexes::add(&d, k, Temporal::Latest, &Progress::default()).unwrap();
+        }
+        variants.push(values_on(&d, script));
+    }
+    let close = |a: &J, b: &J| {
+        if a.is_null() || b.is_null() {
+            return a.is_null() == b.is_null();
+        }
+        let (x, y) = (base(a), base(b));
+        (x - y).abs() <= 0.02 * x.abs().max(1.0)
+    };
+    for v in &variants {
+        for (a, b) in plain.iter().zip(v) {
+            assert!(close(a, b), "{plain:?}\nvs\n{v:?}");
+        }
+    }
+    // the three stored variants agree exactly on the routes
+    assert_eq!(variants[0][..3], variants[1][..3]);
+    assert_eq!(variants[0][..3], variants[2][..3]);
+}

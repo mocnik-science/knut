@@ -212,6 +212,8 @@ pub struct BuildOptions {
     /// Order segments by id (instead of Hilbert key) inside each block.
     pub sort_by_id_in_block: bool,
     pub source_name: String,
+    /// Creation time recorded for the elements (Unix seconds); `None`: now.
+    pub created: Option<i64>,
 }
 
 impl Default for BuildOptions {
@@ -233,6 +235,7 @@ impl Default for BuildOptions {
             s2_sort_key: false,
             tmp_dir: None,
             source_name: String::new(),
+            created: None,
         }
     }
 }

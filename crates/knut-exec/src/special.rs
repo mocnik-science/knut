@@ -86,15 +86,46 @@ pub fn eval(ctx: &Ctx, e: &'static Expr, s: &'static Special, sc: &Sc) -> R<Valu
                 return Ok(Value::None);
             }
             let (pa, pb) = (point(ctx, &a, from.span)?, point(ctx, &b, to.span)?);
+            // the routing network of the container, if there is one
+            if mode.using.is_none()
+                && let Some(v) = stored_path(ctx, pa, pb, mode.mode)?
+            {
+                return Ok(v);
+            }
             let mut bb = BBoxF::EMPTY;
             bb.add(pa);
             bb.add(pb);
             let d = crate::geom::haversine(pa, pb);
-            let net = spatial::network(ctx, mode.mode, mode.using.as_deref(), bb.expand_m((d * 0.3).max(5_000.0)), sc, e.span)?;
-            Ok(match net.path(pa, pb, mode.mode) {
-                Some((len, secs, ways, g)) => Value::Path(Arc::new(PathV { length: len, duration: secs, ways, geom: Arc::new(g) })),
-                None => Value::None,
-            })
+            // The network of a box around both points; the box grows until the route found
+            // is certainly the shortest: a route that leaves the box takes at least the time
+            // to its border from both ends at the highest speed.
+            let extent = ctx.db().map(|db| db.extent).unwrap_or(BBoxF::WORLD);
+            // On foot and by bicycle all ways are about equally fast: a margin of 0.7 times
+            // the distance usually proves the route at once (detours up to 40 %).
+            let mut margin = match mode.mode {
+                Mode::Foot | Mode::Bicycle => (d * 0.7).max(2_000.0),
+                _ => (d * 0.3).max(5_000.0),
+            };
+            loop {
+                let bx = bb.expand_m(margin);
+                let net = spatial::network(ctx, mode.mode, mode.using.as_deref(), bx, sc, e.span)?;
+                let whole = mode.using.is_some() || bx.contains_box(&extent);
+                let found = net.path(pa, pb, mode.mode);
+                let vmax = net.max_speed(mode.mode).max(0.1);
+                let border = |p: crate::geom::P| {
+                    let k = 111_195.0;
+                    let kx = k * p.1.to_radians().cos();
+                    ((p.0 - bx.minx) * kx).min((bx.maxx - p.0) * kx).min((p.1 - bx.miny) * k).min((bx.maxy - p.1) * k)
+                };
+                let bound = (border(pa) + border(pb)) / vmax;
+                match found {
+                    Some((len, secs, ways, g)) if whole || secs <= bound => {
+                        return Ok(Value::Path(Arc::new(PathV { length: len, duration: secs, ways, geom: Arc::new(g) })));
+                    }
+                    None if whole => return Ok(Value::None),
+                    _ => margin *= 2.0,
+                }
+            }
         }
         Special::Isochrone { from, threshold, .. } => {
             let a = ctx.eval(from, sc)?;
@@ -125,6 +156,11 @@ pub fn eval(ctx: &Ctx, e: &'static Expr, s: &'static Special, sc: &Sc) -> R<Valu
             bb.add(p);
             let net = spatial::network(ctx, m.mode, m.using.as_deref(), bb.expand_m(radius * 1.05 + 500.0), sc, e.span)?;
             let cell = (radius / 200.0).clamp(25.0, 500.0);
+            if m.using.is_none()
+                && let Some(v) = stored_isochrone(ctx, p, m.mode, metric, n.v, cell)?
+            {
+                return Ok(v);
+            }
             Ok(match net.isochrone(p, m.mode, metric, n.v, cell) {
                 Some(r) => Value::Region(Arc::new(Region::Raster(r))),
                 None => Value::None,
@@ -246,24 +282,55 @@ pub fn eval(ctx: &Ctx, e: &'static Expr, s: &'static Special, sc: &Sc) -> R<Valu
             let lf = ctx.eval(label, sc)?;
             let ff = ctx.eval(features, sc)?;
             let items = ctx.items_of(&sv, Hints { geom: true, hist: false }, set.span)?;
+            ctx.preload_geoms(&items);
+            // `x.lon, x.lat` next to each other in the feature list form one place
+            let pairs = lon_lat_pairs(features);
             let mut train = Vec::new();
             let mut query = Vec::new();
             let mut qitems = Vec::new();
+            let mut shape: Option<Vec<bool>> = None;
             for it in items.iter() {
                 let fv = ctx.apply(&ff, vec![it.clone()], features.span)?;
                 let fl = ctx.items_of(&fv, Hints::default(), features.span)?;
                 let mut x = Vec::new();
                 let mut ok = true;
-                for f in fl.iter() {
-                    match ctx.to_num(f, None, features.span) {
-                        Ok(Some(n)) => x.push(n.v),
-                        _ => {
-                            ok = false;
-                            break;
+                let mut i = 0;
+                while i < fl.len() {
+                    let f = &fl[i];
+                    if let Some(&(lon_first, _)) = pairs.iter().find(|p| p.1 == i) {
+                        let (a, b) = (ctx.to_num(f, None, features.span), fl.get(i + 1).map(|g| ctx.to_num(g, None, features.span)));
+                        match (a, b) {
+                            (Ok(Some(a)), Some(Ok(Some(b)))) => {
+                                x.push(stats::Feature::Place(if lon_first { (a.v, b.v) } else { (b.v, a.v) }));
+                                i += 2;
+                                continue;
+                            }
+                            _ => {
+                                ok = false;
+                                break;
+                            }
                         }
                     }
+                    match f {
+                        Value::Elem(_) | Value::Region(_) => match ctx.rep_point(f) {
+                            Some(p) => x.push(stats::Feature::Place(p)),
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        },
+                        _ => match ctx.to_num(f, None, features.span) {
+                            Ok(Some(n)) => x.push(stats::Feature::Num(n.v)),
+                            _ => {
+                                ok = false;
+                                break;
+                            }
+                        },
+                    }
+                    i += 1;
                 }
-                if !ok {
+                let s: Vec<bool> = x.iter().map(|f| matches!(f, stats::Feature::Place(_))).collect();
+                if !ok || shape.get_or_insert_with(|| s.clone()) != &s {
                     continue;
                 }
                 let l = match ctx.apply(&lf, vec![it.clone()], label.span) {
@@ -358,7 +425,36 @@ pub fn all_keys(ctx: &Ctx, t: i64, _span: Span) -> R<Value> {
         return Ok(v.clone());
     }
     let db = ctx.db()?;
+    // the tag statistics answer the last moment
+    let from_index = match db.reader.element(knut_format::container::ElementKind::TagStatistics) {
+        Some(el) if t == db.latest => el.sections.first().and_then(|s| db.reader.section_bytes(s).ok()).and_then(decode_key_stats).filter(|x| x.0 == t),
+        _ => None,
+    };
+    let keys = match from_index {
+        Some((_, k)) => k,
+        None => key_stats(db, ctx.control.as_deref(), t)?,
+    };
+    let vals: Vec<Value> = keys
+        .into_iter()
+        .map(|(k, n, nv)| {
+            let rec = Arc::new(KeyRec { name: k.clone(), count: n, values: nv });
+            let mut v = Ver::empty();
+            v.ts = t;
+            let id = (xxhash_rust::xxh3::xxh3_64(k.as_bytes()) >> 1) as i64;
+            let mut el = Elem::new(EKind::Key, None, id, v, t);
+            el.extra = Extra::Key(rec);
+            Value::Elem(Arc::new(el))
+        })
+        .collect();
+    let v = Value::Set(Arc::new(SetV::from_vec(vals)));
+    lock(&ctx.caches.keys).insert(t, v.clone());
+    Ok(v)
+}
+
+/// Every key in use at `t`: (key, elements with it, distinct values), sorted by key.
+pub fn key_stats(db: &crate::db::Db, ctl: Option<&crate::control::Control>, t: i64) -> R<Vec<(Arc<str>, u64, u64)>> {
     let spec = ScanSpec {
+        bbox: None,
         kinds: KindMask { node: true, way: true, relation: true, ..Default::default() },
         time: TimeMode::State(t),
         region: None,
@@ -367,7 +463,7 @@ pub fn all_keys(ctx: &Ctx, t: i64, _span: Span) -> R<Value> {
         need_hist: false,
     };
     type Acc = HashMap<Arc<str>, (u64, HashSet<u64>)>;
-    let parts = scan::fold(db, ctx.control.as_deref(), &spec, &Acc::default, &|acc: &mut Acc, it: Item| {
+    let parts = scan::fold(db, ctl, &spec, &Acc::default, &|acc: &mut Acc, it: Item| {
         if let Item::Elem(e) = it {
             for (k, v) in e.v.tags.iter() {
                 let ent = acc.entry(k.clone()).or_default();
@@ -385,19 +481,110 @@ pub fn all_keys(ctx: &Ctx, t: i64, _span: Span) -> R<Value> {
             ent.1.extend(vs);
         }
     }
-    let vals: Vec<Value> = all
-        .into_iter()
-        .map(|(k, (n, vs))| {
-            let rec = Arc::new(KeyRec { name: k.clone(), count: n, values: vs.len() as u64 });
-            let mut v = Ver::empty();
-            v.ts = t;
-            let id = (xxhash_rust::xxh3::xxh3_64(k.as_bytes()) >> 1) as i64;
-            let mut el = Elem::new(EKind::Key, None, id, v, t);
-            el.extra = Extra::Key(rec);
-            Value::Elem(Arc::new(el))
-        })
-        .collect();
-    let v = Value::Set(Arc::new(SetV::from_vec(vals)));
-    lock(&ctx.caches.keys).insert(t, v.clone());
+    let mut v: Vec<(Arc<str>, u64, u64)> = all.into_iter().map(|(k, (n, vs))| (k, n, vs.len() as u64)).collect();
+    v.sort();
     Ok(v)
+}
+
+const KEYS_MAGIC: &[u8; 8] = b"KKEYS001";
+
+/// The section of the tag statistics (zstd): magic, i64 moment, u32 keys, then per key
+/// u32 length, name, u64 count, u64 distinct values.
+pub fn encode_key_stats(t: i64, keys: &[(Arc<str>, u64, u64)]) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(KEYS_MAGIC);
+    b.extend_from_slice(&t.to_le_bytes());
+    b.extend_from_slice(&(keys.len() as u32).to_le_bytes());
+    for (k, n, nv) in keys {
+        b.extend_from_slice(&(k.len() as u32).to_le_bytes());
+        b.extend_from_slice(k.as_bytes());
+        b.extend_from_slice(&n.to_le_bytes());
+        b.extend_from_slice(&nv.to_le_bytes());
+    }
+    zstd::bulk::compress(&b, 19).unwrap_or(b)
+}
+
+#[allow(clippy::type_complexity)]
+pub fn decode_key_stats(z: &[u8]) -> Option<(i64, Vec<(Arc<str>, u64, u64)>)> {
+    let b = zstd::stream::decode_all(z).ok()?;
+    if b.get(0..8)? != KEYS_MAGIC {
+        return None;
+    }
+    let u64_at = |o: usize| b.get(o..o + 8).map(|x| u64::from_le_bytes(x.try_into().unwrap()));
+    let t = u64_at(8)? as i64;
+    let n = u32::from_le_bytes(b.get(16..20)?.try_into().ok()?) as usize;
+    let mut o = 20;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        let l = u32::from_le_bytes(b.get(o..o + 4)?.try_into().ok()?) as usize;
+        let k: Arc<str> = Arc::from(std::str::from_utf8(b.get(o + 4..o + 4 + l)?).ok()?);
+        o += 4 + l;
+        out.push((k, u64_at(o)?, u64_at(o + 8)?));
+        o += 16;
+    }
+    Some((t, out))
+}
+
+/// Positions in a feature list `x => [… x.lon, x.lat …]` where a `.lon`/`.lat` pair starts:
+/// (lon comes first, position).
+fn lon_lat_pairs(features: &Expr) -> Vec<(bool, usize)> {
+    let ExprKind::Lambda(_, body) = &features.kind else { return Vec::new() };
+    let ExprKind::List(xs) = &body.kind else { return Vec::new() };
+    fn field(e: &Expr) -> Option<(&str, &ExprKind)> {
+        match &e.kind {
+            ExprKind::Field(base, name, _) => Some((name.as_str(), &base.kind)),
+            _ => None,
+        }
+    }
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < xs.len() {
+        match (field(&xs[i]), field(&xs[i + 1])) {
+            (Some(("lon", a)), Some(("lat", b))) if a == b => {
+                out.push((true, i));
+                i += 2;
+            }
+            (Some(("lat", a)), Some(("lon", b))) if a == b => {
+                out.push((false, i));
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
+/// A route through the stored routing network (`None` if the container has none).
+fn stored_path(ctx: &Ctx, pa: crate::geom::P, pb: crate::geom::P, m: Mode) -> R<Option<Value>> {
+    let db = ctx.db()?;
+    let Some(net) = crate::routing::load(db) else { return Ok(None) };
+    let (Some(a), Some(b)) = (crate::routing::snap(db, &net, pa, m), crate::routing::snap(db, &net, pb, m)) else {
+        return Ok(Some(Value::None));
+    };
+    let route = crate::ch::route(db, &net, &a, &b, m).or_else(|| crate::routing::astar(&net, &a, &b, m));
+    Ok(Some(match route {
+        Some(r) => {
+            let (len, ways, g) = crate::routing::draw(db, &net, &r, m);
+            Value::Path(Arc::new(PathV { length: len, duration: r.seconds, ways, geom: Arc::new(g) }))
+        }
+        None => Value::None,
+    }))
+}
+
+/// An isochrone in the stored routing network (`None` if the container has none).
+fn stored_isochrone(ctx: &Ctx, p: crate::geom::P, m: Mode, metric: Metric, limit: f64, cell: f64) -> R<Option<Value>> {
+    if !matches!(metric, Metric::Time) {
+        return Ok(None);
+    }
+    let db = ctx.db()?;
+    let Some(net) = crate::routing::load(db) else { return Ok(None) };
+    let Some(s) = crate::routing::snap(db, &net, p, m) else { return Ok(Some(Value::None)) };
+    let sources = crate::routing::entries(&net, &s, m, true);
+    // a search bounded by the time first (it touches only what is reachable); if that is a
+    // large share of the network, a sweep over the hierarchy (PHAST) is faster
+    let dist = crate::routing::reach_bounded(&net, &sources, m, limit, net.n() / 10)
+        .or_else(|| crate::ch::reach(db, &net, &sources, m, limit))
+        .unwrap_or_else(|| crate::routing::reach(&net, &sources, m, limit));
+    let r = crate::routing::isochrone_raster(db, &net, &s, &dist, m, limit, cell);
+    Ok(Some(Value::Region(Arc::new(Region::Raster(r)))))
 }

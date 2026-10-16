@@ -255,6 +255,16 @@ impl Reader {
         })
     }
 
+    /// The bytes of one section (of an optional index, for example).
+    pub fn section_bytes(&self, s: &SectionEntry) -> Result<&[u8]> {
+        Ok(le::slice(self.buf(), s.offset as usize, s.length as usize)?)
+    }
+
+    /// The newest element of a kind in the container, if any.
+    pub fn element(&self, kind: knut_format::container::ElementKind) -> Option<&knut_format::container::Element> {
+        self.header.directory.elements.iter().filter(|e| e.kind == kind).max_by_key(|e| e.id)
+    }
+
     #[inline]
     pub(crate) fn buf(&self) -> &[u8] {
         self.data.bytes()
@@ -693,17 +703,13 @@ impl Reader {
     /// Verifies section checksums (footer) and, if `deep`, decodes every block.
     pub fn verify(&self, deep: bool) -> Result<VerifyReport> {
         let buf = self.buf();
-        let sums = parse_footer(buf)?;
-        if sums.len() != self.header.sections.len() {
-            return Err(corrupt("footer section count mismatch"));
-        }
-        for (s, &c) in self.header.sections.iter().zip(&sums) {
+        for s in &self.header.sections {
             let b = le::slice(buf, s.offset as usize, s.length as usize)?;
-            if xxh3_64(b) != c {
+            if xxh3_64(b) != s.checksum {
                 return Err(Error::Format(knut_format::Error::Checksum(format!("section kind {}", s.kind))));
             }
         }
-        let mut rep = VerifyReport { sections: sums.len(), ..Default::default() };
+        let mut rep = VerifyReport { sections: self.header.sections.len(), ..Default::default() };
         if deep {
             use rayon::prelude::*;
             let n = self.n_blocks() as u32;

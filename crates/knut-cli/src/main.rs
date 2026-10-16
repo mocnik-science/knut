@@ -1,5 +1,6 @@
 //! `knut` command line: run scripts, build, info, query, verify, dump, bench.
 
+mod manage;
 mod parquet_export;
 
 use clap::{Args, Parser, Subcommand};
@@ -28,19 +29,53 @@ enum Cmd {
     Run(RunArgs),
     /// Web interface on a map for writing and running queries
     Web(WebArgs),
-    /// Build side indexes next to a database (changesets, notes)
+    /// Changesets with comments from a dump (into the container), notes (side file)
     Index {
         #[command(subcommand)]
         what: IndexCmd,
     },
     /// Convert an OSM history PBF (*.osh.pbf) into .knutdb
     Build(BuildArgs),
-    /// Show header, sections and statistics
+    /// Show what a database contains
     Info {
         file: PathBuf,
+        /// Also the technical details (sections, blocks, trees, build parameters)
+        #[arg(long)]
+        detailed: bool,
         /// Also list the user table
         #[arg(long)]
         users: bool,
+    },
+    /// Look into a database and add, remove or compact its indexes (interactive without a command)
+    Manage {
+        file: PathBuf,
+        #[command(subcommand)]
+        cmd: Option<ManageCmd>,
+    },
+    /// Search objects by name (needs the name index)
+    Search {
+        file: PathBuf,
+        text: String,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+    },
+    /// Find an address, e.g. "Am Wall 201, Bremen" (needs the address index)
+    Geocode {
+        file: PathBuf,
+        address: String,
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+    },
+    /// The nearest addresses to a point lon,lat (needs the address index)
+    Reverse {
+        file: PathBuf,
+        #[arg(allow_hyphen_values = true)]
+        point: String,
+        /// Search radius in metres
+        #[arg(long, default_value_t = 100.0)]
+        radius: f64,
+        #[arg(long, default_value_t = 1)]
+        limit: usize,
     },
     /// Run a query and print JSON lines
     Query {
@@ -135,6 +170,34 @@ struct RunArgs {
 }
 
 #[derive(Subcommand)]
+enum ManageCmd {
+    /// List all kinds of elements and which exist
+    Ls {
+        /// With a short explanation of each
+        #[arg(long)]
+        explain: bool,
+    },
+    /// Build an index and add it: places, names, addresses, keys, changesets, routing, routing-ch, routing-cch
+    Add {
+        what: String,
+        /// latest (default), daily, weekly, monthly, yearly or full
+        #[arg(long)]
+        time: Option<String>,
+    },
+    /// Remove an element (by its id)
+    Rm {
+        id: u32,
+        /// Do not ask
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// Rewrite the file without the space of removed elements
+    Compact,
+    /// Convert a file of format 1.0
+    Upgrade,
+}
+
+#[derive(Subcommand)]
 enum IndexCmd {
     /// Changesets and users derived from the history; optionally comments and tags from a
     /// changeset dump (changesets-latest.osm.bz2)
@@ -195,6 +258,9 @@ struct BuildArgs {
     /// Directory for temporary files (default: next to the output)
     #[arg(long)]
     tmp_dir: Option<PathBuf>,
+    /// Do not add the place index, name index, address index and tag statistics
+    #[arg(long)]
+    no_index: bool,
     /// Number of worker threads (default: all cores)
     #[arg(long)]
     threads: Option<usize>,
@@ -413,8 +479,13 @@ fn index(what: IndexCmd) -> Result<(), String> {
         IndexCmd::Changesets { db, dump } => {
             let d = knut_exec::db::Db::open(&db)?;
             let st = Instant::now();
-            let p = knut_exec::cs::build_sidecar(&d, dump.as_deref(), &mut |m| eprintln!("{m}"))?;
-            eprintln!("wrote {} in {:.1} s", p.display(), st.elapsed().as_secs_f64());
+            let bytes = knut_exec::cs::build_section(&d, dump.as_deref(), &mut |m| eprintln!("{m}"))?;
+            let at = ("at".to_string(), format_time(d.latest));
+            drop(d);
+            use knut_format::container::{ElementKind, Temporal};
+            let section = knut::container::NewSection { kind: knut_format::layout::SectionKind::Index as u32, flags: 1, bytes };
+            let id = knut::container::add_element(&db, ElementKind::Changesets, Temporal::Full, vec![at], vec![section]).map_err(|e| e.to_string())?;
+            eprintln!("added element {id} (changesets and users) to {} in {:.1} s", db.display(), st.elapsed().as_secs_f64());
         }
         IndexCmd::Notes { db, dump } => {
             let st = Instant::now();
@@ -432,7 +503,20 @@ fn run(cli: Cli) -> Result<(), String> {
         Cmd::Index { what } => index(what),
         Cmd::Web(a) => knut_web::serve(knut_web::WebOptions { db: a.db, host: a.host, port: a.port, open: !a.no_open, style: a.style }),
         Cmd::Build(a) => build(a),
-        Cmd::Info { file, users } => info(&file, users),
+        Cmd::Info { file, detailed, users } => info(&file, detailed, users),
+        Cmd::Search { file, text, limit } => search(&file, &text, limit),
+        Cmd::Geocode { file, address, limit } => geocode(&file, &address, limit),
+        Cmd::Reverse { file, point, radius, limit } => reverse(&file, &point, radius, limit),
+        Cmd::Manage { file, cmd } => manage::run(
+            &file,
+            cmd.map(|c| match c {
+                ManageCmd::Ls { explain } => manage::Command::Ls { explain },
+                ManageCmd::Add { what, time } => manage::Command::Add { what, temporal: time },
+                ManageCmd::Rm { id, yes } => manage::Command::Rm { id, yes },
+                ManageCmd::Compact => manage::Command::Compact,
+                ManageCmd::Upgrade => manage::Command::Upgrade,
+            }),
+        ),
         Cmd::Query { file, q } => {
             let r = Reader::open(&file).map_err(|e| s(&e))?;
             match q {
@@ -514,13 +598,78 @@ fn build(a: BuildArgs) -> Result<(), String> {
         stats.output_bytes as f64 / src.file_len() as f64,
         st.elapsed().as_secs_f64()
     );
+    if !a.no_index {
+        use knut_format::container::{ElementKind, Temporal};
+        for kind in [ElementKind::PlaceIndex, ElementKind::NameIndex, ElementKind::AddressIndex, ElementKind::TagStatistics] {
+            let t = Instant::now();
+            let id = knut_exec::indexes::add(&a.output, kind, Temporal::Latest, &knut_exec::indexes::Progress::default())?;
+            log(&format!("added element {id}: {} ({:.1}s)", kind.info().name.to_lowercase(), t.elapsed().as_secs_f64()));
+        }
+    }
     Ok(())
 }
 
-fn info(file: &PathBuf, users: bool) -> Result<(), String> {
+fn info(file: &PathBuf, detailed: bool, users: bool) -> Result<(), String> {
+    if knut::container::is_legacy(file) {
+        return Err(format!("{} has format 1.0; convert it first:  knut manage {} upgrade", file.display(), file.display()));
+    }
     let r = Reader::open(file).map_err(|e| e.to_string())?;
     let h = &r.header;
-    println!("format     {}.{}", h.format_major, h.format_minor);
+    manage::print_summary(file, h, r.meta_text().as_deref());
+    println!();
+    manage::print_table(h, false, false);
+    if detailed {
+        println!();
+        info_detailed(&r)?;
+    }
+    if users {
+        println!();
+        for u in r.users().map_err(|e| e.to_string())? {
+            println!("{}\t{}\t{}\t{}", u.uid, u.name, format_time(u.first_seen), format_time(u.last_seen));
+        }
+    }
+    Ok(())
+}
+
+fn search(file: &PathBuf, text: &str, limit: usize) -> Result<(), String> {
+    use knut_format::container::ElementKind;
+    let r = Reader::open(file).map_err(|e| e.to_string())?;
+    let ix = knut_exec::geocode::NameIx::new(knut_exec::indexes::element_bytes(&r, ElementKind::NameIndex)?)?;
+    for h in ix.search(text, limit) {
+        println!("{:<9} {:>12}  {:>10.6} {:>10.6}  {:<40} {}", h.otype.name(), h.id, h.lon, h.lat, h.name, h.class);
+    }
+    Ok(())
+}
+
+fn geocode(file: &PathBuf, address: &str, limit: usize) -> Result<(), String> {
+    use knut_format::container::ElementKind;
+    let r = Reader::open(file).map_err(|e| e.to_string())?;
+    let ix = knut_exec::geocode::AddrIx::new(knut_exec::indexes::element_bytes(&r, ElementKind::AddressIndex)?)?;
+    for a in ix.geocode(address, limit) {
+        println!("{:>10.6} {:>10.6}  {:<9} {:>12}  {}", a.lon, a.lat, a.otype.name(), a.id, a.text());
+    }
+    Ok(())
+}
+
+fn reverse(file: &PathBuf, point: &str, radius: f64, limit: usize) -> Result<(), String> {
+    use knut_format::container::ElementKind;
+    let v: Vec<f64> = point.split(',').map(|x| x.trim().parse::<f64>()).collect::<Result<_, _>>().map_err(|_| "the point is lon,lat".to_string())?;
+    let [lon, lat] = v[..] else { return Err("the point is lon,lat".into()) };
+    let r = Reader::open(file).map_err(|e| e.to_string())?;
+    let ix = knut_exec::geocode::AddrIx::new(knut_exec::indexes::element_bytes(&r, ElementKind::AddressIndex)?)?;
+    let found = ix.reverse(lon, lat, radius, limit);
+    if found.is_empty() {
+        println!("no address within {radius} m");
+    }
+    for a in found {
+        println!("{:>6.0} m  {:<9} {:>12}  {}", a.distance, a.otype.name(), a.id, a.text());
+    }
+    Ok(())
+}
+
+fn info_detailed(r: &Reader) -> Result<(), String> {
+    let h = &r.header;
+    println!("format     {}.{}.{}", h.version[0], h.version[1], h.version[2]);
     println!("features   {:#x}", h.features);
     println!("time       {} .. {} (base {})", format_time(h.tmin), format_time(h.tmax), format_time(h.time_base));
     println!(
@@ -559,11 +708,6 @@ fn info(file: &PathBuf, users: bool) -> Result<(), String> {
         println!("meta");
         for l in m.lines() {
             println!("  {l}");
-        }
-    }
-    if users {
-        for u in r.users().map_err(|e| e.to_string())? {
-            println!("{}\t{}\t{}\t{}", u.uid, u.name, format_time(u.first_seen), format_time(u.last_seen));
         }
     }
     Ok(())

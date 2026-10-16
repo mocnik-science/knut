@@ -117,7 +117,7 @@ count of benches, benches                # two outputs</pre>
 <tr><td><code>fit powerlaw to X</code></td><td>exponent α and x<sub>min</sub></td></tr>
 <tr><td><code>forecast 3 years of SERIES</code></td><td>linear continuation</td></tr>
 <tr><td><code>confusion of A with B</code></td><td>pairs of values counted</td></tr>
-<tr><td><code>classify S by x =&gt; LABEL using x =&gt; [F, …]</code></td><td>k nearest neighbours; predictions and accuracy</td></tr>
+<tr><td><code>classify S by x =&gt; LABEL using x =&gt; [F, …]</code></td><td>5 nearest neighbours; numbers standardized, places (<code>x.lon, x.lat</code>, points, elements) by distance on the sphere; predictions and leave-one-out accuracy</td></tr>
 <tr><td><code>split S by KEY at C</code></td><td>sequences cut where C holds</td></tr>
 <tr><td><code>dataset 'file.csv'</code></td><td>CSV, GeoJSON or Parquet as elements (columns as tags)</td></tr>
 </table>

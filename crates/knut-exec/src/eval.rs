@@ -85,6 +85,7 @@ impl Ctx {
             walk_static(p, &mut |x| {
                 let target: Option<&'static Expr> = match &x.kind {
                     ExprKind::Rel(_, RelTail::Near { set, .. }) => Some(set),
+                    ExprKind::Of { func: OfFunc::Nearest, operand: OfOperand::Expr(set), clauses, .. } if clauses.mode.is_none() => Some(set),
                     ExprKind::Rel(_, RelTail::Within(r)) | ExprKind::Rel(_, RelTail::Overlapping(r)) | ExprKind::Rel(_, RelTail::In(r)) => Some(r),
                     _ => None,
                 };
@@ -97,7 +98,7 @@ impl Ctx {
                     _ => self.eval(t, sc),
                 };
                 if let Ok(Value::Set(s)) = v
-                    && matches!(&x.kind, ExprKind::Rel(_, RelTail::Near { .. }))
+                    && matches!(&x.kind, ExprKind::Rel(_, RelTail::Near { .. }) | ExprKind::Of { .. })
                 {
                     let _ = crate::spatial::geo_index(self, &s, t.span);
                 }
@@ -116,7 +117,7 @@ impl Ctx {
     }
 
     /// True if `e` uses no variable bound outside of it (only globals and its own variables).
-    fn closed(&self, e: &'static Expr) -> bool {
+    pub(crate) fn closed(&self, e: &'static Expr) -> bool {
         if let Some(&c) = lock(&self.caches.closed).get(&e.span) {
             return c;
         }
@@ -428,6 +429,7 @@ impl Ctx {
             Kind::Key => crate::special::all_keys(self, self.latest(), span),
             _ => {
                 let spec = ScanSpec {
+                    bbox: None,
                     kinds: KindMask::of(k),
                     time: TimeMode::State(self.latest()),
                     region: None,
@@ -688,6 +690,13 @@ impl Ctx {
                     return Ok(Value::Grouped(Arc::new(Grouped { key_names: g.key_names.clone(), value_name: g.value_name.clone(), rows })));
                 }
                 let items = self.items_of(&b, Hints { geom: true, hist: false }, base.span)?;
+                if args.first().is_some_and(uses_geom) {
+                    self.preload_geoms(&items);
+                }
+                // closed sets inside the function (near, nearest): built once, not by each thread
+                if let Some(a) = args.first() {
+                    self.warm_up(&[a], sc);
+                }
                 let out: Vec<Value> = if is_map {
                     use rayon::prelude::*;
                     items.par_iter().map(|x| self.apply(&fv, vec![x.clone()], span)).collect::<R<Vec<_>>>()?
@@ -838,13 +847,13 @@ impl Ctx {
         })
     }
 
-    /// The element's geometry (computed on first use).
-    /// Loads the geometry of many nodes and ways in two batched lookups (for outputs of
-    /// elements decoded without geometry). Relations stay lazy.
+    /// Loads the geometry of many elements in batched lookups (for elements decoded without
+    /// geometry): each block is decoded once instead of once per element.
     pub fn preload_geoms(&self, items: &[Value]) {
         let Some(db) = &self.db else { return };
         let mut nodes = Vec::new();
         let mut ways = Vec::new();
+        let mut rels = Vec::new();
         for it in items {
             let Value::Elem(e) = it else { continue };
             if e.geom.get().is_some() || !e.v.visible {
@@ -853,7 +862,16 @@ impl Ctx {
             match e.otype {
                 Some(ObjType::Node) if e.v.pos.is_none() => nodes.push(e.clone()),
                 Some(ObjType::Way) => ways.push(e.clone()),
+                Some(ObjType::Relation) => rels.push(e.clone()),
                 _ => {}
+            }
+        }
+        // in chunks, so that the member geometries of huge sets need not be held at once
+        for chunk in rels.chunks(20_000) {
+            let reqs: Vec<(bool, &[knut_format::Member], i64)> =
+                chunk.iter().map(|e| (e.kind == EKind::Area, &e.v.members[..], e.at)).collect();
+            for (e, g) in chunk.iter().zip(db.relation_geoms(&reqs)) {
+                let _ = e.geom.set(Arc::new(g));
             }
         }
         if !nodes.is_empty() {
@@ -934,6 +952,7 @@ impl Ctx {
             }
             Value::Set(_) | Value::List(_) => {
                 let items = self.items_of(v, Hints { geom: true, hist: false }, span)?;
+                self.preload_geoms(&items);
                 let mut rs = Vec::new();
                 let mut bb = geom::BBoxF::EMPTY;
                 for it in items.iter() {
@@ -941,7 +960,7 @@ impl Ctx {
                     bb.union(&r.bbox());
                     rs.push(r);
                 }
-                Arc::new(Region::Union(rs, bb, format!("{} areas", items.len())))
+                Arc::new(Region::Union(crate::region::Union::new(rs, bb, format!("{} areas", items.len()))))
             }
             Value::Text(t) => crate::places::region_value(self, t, span).and_then(|v| self.region_of(&v, span))?,
             Value::Group(g) => self.region_of(&g.key, span)?,
@@ -1029,8 +1048,10 @@ impl Ctx {
             let mut exact = true;
             let mut need_geom = false;
             let mut need_hist = false;
+            let mut bbox = None;
             if s.pattern.len() == 1 {
                 let var = &s.pattern[0].var;
+                bbox = crate::spatial::scan_hint(self, &preds, var, sc)?;
                 for p in &preds {
                     let x = pushdown::extract(p, var, self.chk);
                     pred = if pred.is_true() { x.pred } else { TagPred::And(vec![pred, x.pred]) };
@@ -1100,7 +1121,7 @@ impl Ctx {
                 None => None,
             };
             let time = if seq.is_some() { TimeMode::History } else { time };
-            let spec = ScanSpec { kinds, time, region, pred, need_geom, need_hist };
+            let spec = ScanSpec { kinds, time, region, bbox, pred, need_geom, need_hist };
             let preds = if exact && s.pattern.len() == 1 { Vec::new() } else { preds };
             let q = Query { spec, vars: vars.clone(), preds, scope: sc.clone(), seq };
             Arc::new(SetV::lazy(SetSrc::Query(Arc::new(q))))
@@ -1291,14 +1312,20 @@ pub fn rand_rank(seed: u64, v: &Value) -> u64 {
 
 /// The first `n` elements in (kind, id, version) order, by random rank, or by `order`.
 pub fn pick_n(ctx: &Ctx, set: &Arc<SetV>, n: usize, seed: Option<u64>, order: Option<&'static Expr>, vars: &[String]) -> R<Vec<Value>> {
-    if order.is_some() {
-        let items = set.items(ctx, Hints::default())?;
-        let mut keyed = Vec::new();
-        for v in items.iter() {
-            let sc = ctx.bind_elem(&None, vars, v);
-            let k = ctx.eval(order.unwrap(), &sc)?.key();
-            keyed.push((k, v.key(), v.clone()));
+    if let Some(order) = order {
+        let geom = uses_geom(order);
+        let items = set.items(ctx, Hints { geom, hist: false })?;
+        if geom {
+            ctx.preload_geoms(&items);
         }
+        use rayon::prelude::*;
+        let mut keyed = items
+            .par_iter()
+            .map(|v| {
+                let sc = ctx.bind_elem(&None, vars, v);
+                Ok((ctx.eval(order, &sc)?.key(), v.key(), v.clone()))
+            })
+            .collect::<R<Vec<_>>>()?;
         keyed.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
         return Ok(keyed.into_iter().take(n).map(|x| x.2).collect());
     }
@@ -1411,6 +1438,21 @@ pub fn cancelled() -> RtErr {
 }
 
 /// Visits `e` and all its sub-expressions, keeping their `'static` lifetime.
+/// Whether evaluating `e` needs the geometry of elements (fields such as `.area`, spatial
+/// relations, nearest): then a set is better given its geometry in one batch.
+pub fn uses_geom(e: &Expr) -> bool {
+    let mut found = false;
+    e.walk(&mut |x| {
+        found |= match &x.kind {
+            ExprKind::Field(_, name, _) => matches!(name.as_str(), "area" | "length" | "geometry" | "center" | "lon" | "lat" | "nodes"),
+            ExprKind::Rel(_, RelTail::Within(_) | RelTail::Overlapping(_) | RelTail::Near { .. }) => true,
+            ExprKind::Of { func, .. } => matches!(func, OfFunc::Nearest | OfFunc::Spread | OfFunc::Density),
+            _ => false,
+        };
+    });
+    found
+}
+
 fn walk_static(e: &'static Expr, f: &mut dyn FnMut(&'static Expr)) {
     f(e);
     for c in e.children() {

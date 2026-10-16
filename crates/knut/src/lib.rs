@@ -6,6 +6,7 @@
 #[cfg(feature = "arrow")]
 pub mod arrow;
 mod cache;
+pub mod container;
 mod file;
 mod query;
 

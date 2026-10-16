@@ -1,6 +1,6 @@
 //! Changesets and users (KNUT_LANG.md §7.2): an index derived from the history once and
-//! stored next to the database (`x.changesets.knutidx`). Comments and tags come from an
-//! optional changeset dump.
+//! stored in the container (element "Changesets and users"; older databases: a side file
+//! `x.changesets.knutidx`). Comments and tags come from an optional changeset dump.
 
 use crate::arith::duration;
 use crate::db::Db;
@@ -167,16 +167,15 @@ fn build(db: &Db) -> Result<Vec<RawCs>, String> {
     Ok(recs)
 }
 
-fn write(path: &Path, f: &File) -> Result<(), String> {
+fn encode(f: &File) -> Result<Vec<u8>, String> {
     let bytes = postcard::to_allocvec(f).map_err(|e| e.to_string())?;
     let z = zstd::encode_all(&bytes[..], 3).map_err(|e| e.to_string())?;
     let mut out = b"KNUTCS1\0".to_vec();
     out.extend_from_slice(&z);
-    std::fs::write(path, out).map_err(|e| e.to_string())
+    Ok(out)
 }
 
-fn read(path: &Path) -> Option<File> {
-    let b = std::fs::read(path).ok()?;
+fn decode(b: &[u8]) -> Option<File> {
     let z = b.strip_prefix(b"KNUTCS1\0")?;
     let raw = zstd::decode_all(z).ok()?;
     postcard::from_bytes(&raw).ok()
@@ -220,32 +219,36 @@ fn to_index(recs: Vec<RawCs>, db: &Db) -> CsIndex {
     CsIndex { recs, by_id, users, by_uid }
 }
 
-/// Loads the side index, building it once if it is missing or stale.
+/// The changeset index: from the container element, else from an older side file next to
+/// the database, else built now (and not stored: `knut manage FILE add changesets` stores it).
 pub fn index(ctx: &Ctx) -> R<Arc<CsIndex>> {
     ctx.caches
         .cs
         .get_or_init(|| {
             let db = ctx.db()?;
-            let path = sidecar(&db.path, "changesets");
-            if let Some(f) = read(&path)
+            if let Some(el) = db.reader.element(knut_format::container::ElementKind::Changesets)
+                && let Some(f) = el.sections.first().and_then(|s| db.reader.section_bytes(s).ok()).and_then(decode)
+            {
+                return Ok(Arc::new(to_index(f.recs, db)));
+            }
+            if let Some(f) = std::fs::read(sidecar(&db.path, "changesets")).ok().as_deref().and_then(decode)
                 && f.stamp == stamp(db)
             {
                 return Ok(Arc::new(to_index(f.recs, db)));
             }
-            lock(&ctx.caches.notices).push(format!("Building the changeset index {} (once)…", path.display()));
+            lock(&ctx.caches.notices).push(format!(
+                "Deriving changesets and users from all versions; to keep them: knut manage {} add changesets",
+                db.path.display()
+            ));
             let recs = build(db).map_err(|e| RtErr::internal(Span::default(), e))?;
-            let f = File { stamp: stamp(db), recs };
-            if let Err(e) = write(&path, &f) {
-                lock(&ctx.caches.notices).push(format!("Could not store the changeset index: {e}"));
-            }
-            Ok(Arc::new(to_index(f.recs, db)))
+            Ok(Arc::new(to_index(recs, db)))
         })
         .clone()
 }
 
-/// `knut index changesets DB [--dump changesets.osm.bz2]`.
-pub fn build_sidecar(db: &Db, dump: Option<&Path>, log: &mut dyn FnMut(&str)) -> Result<PathBuf, String> {
-    let path = sidecar(&db.path, "changesets");
+/// The section of the element "Changesets and users", optionally with comments and tags
+/// from a changeset dump.
+pub fn build_section(db: &Db, dump: Option<&Path>, log: &mut dyn FnMut(&str)) -> Result<Vec<u8>, String> {
     log("reading all versions …");
     let mut recs = build(db)?;
     if let Some(d) = dump {
@@ -258,8 +261,7 @@ pub fn build_sidecar(db: &Db, dump: Option<&Path>, log: &mut dyn FnMut(&str)) ->
             }
         })?;
     }
-    write(&path, &File { stamp: stamp(db), recs })?;
-    Ok(path)
+    encode(&File { stamp: stamp(db), recs })
 }
 
 pub fn cs_value(r: &Arc<CsRec>) -> Value {

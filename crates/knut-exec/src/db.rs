@@ -323,47 +323,72 @@ impl Db {
 
     /// Multipolygon of a relation's way members at time `t` (nested relations ignored).
     pub fn area_geom(&self, members: &[Member], t: i64) -> Geom {
-        let reqs: Vec<(i64, i64)> = members.iter().filter(|m| m.kind == ObjType::Way).map(|m| (m.id, t)).collect();
-        let ways = self.way_geoms(&reqs);
-        let pieces = members
-            .iter()
-            .filter(|m| m.kind == ObjType::Way)
-            .filter_map(|m| {
-                let (nids, pts) = ways.get(&(m.id, t))?.as_ref()?;
-                if pts.iter().any(|p| p.is_none()) {
-                    return None;
-                }
-                Some((m.role.as_ref() == "inner", nids.clone(), pts.iter().map(|p| p.unwrap()).collect()))
-            })
-            .collect();
-        geom::assemble(pieces)
+        self.relation_geoms(&[(true, members, t)]).pop().unwrap_or(Geom::Empty)
     }
 
     /// Geometry of a non-area relation: its node and way members at `t`.
     pub fn relation_geom(&self, members: &[Member], t: i64) -> Geom {
-        let wreq: Vec<(i64, i64)> = members.iter().filter(|m| m.kind == ObjType::Way).map(|m| (m.id, t)).collect();
-        let nreq: Vec<(i64, i64)> = members.iter().filter(|m| m.kind == ObjType::Node).map(|m| (m.id, t)).collect();
-        let ways = self.way_geoms(&wreq);
-        let nodes = self.positions(&nreq);
-        let mut parts = Vec::new();
-        for m in members {
-            match m.kind {
-                ObjType::Node => {
-                    if let Some(Some(p)) = nodes.get(&(m.id, t)) {
-                        parts.push(Geom::Point(geom::e7(*p)));
-                    }
+        self.relation_geoms(&[(false, members, t)]).pop().unwrap_or(Geom::Empty)
+    }
+
+    /// Geometries of many relations at once: `(area, members, t)`. The members of all of them
+    /// are looked up together, so that each block is decoded once, and the geometries are
+    /// assembled in parallel.
+    pub fn relation_geoms(&self, reqs: &[(bool, &[Member], i64)]) -> Vec<Geom> {
+        let mut wreq: Vec<(i64, i64)> = Vec::new();
+        let mut nreq: Vec<(i64, i64)> = Vec::new();
+        for (area, members, t) in reqs {
+            for m in members.iter() {
+                match m.kind {
+                    ObjType::Way => wreq.push((m.id, *t)),
+                    ObjType::Node if !area => nreq.push((m.id, *t)),
+                    _ => {}
                 }
-                ObjType::Way => {
-                    if let Some(Some((_, pts))) = ways.get(&(m.id, t)) {
-                        let l: Vec<P> = pts.iter().flatten().copied().collect();
-                        if !l.is_empty() {
-                            parts.push(Geom::Line(l));
-                        }
-                    }
-                }
-                ObjType::Relation => {}
             }
         }
-        Geom::Multi(parts)
+        wreq.sort_unstable();
+        wreq.dedup();
+        nreq.sort_unstable();
+        nreq.dedup();
+        let ways = self.way_geoms(&wreq);
+        let nodes = if nreq.is_empty() { HashMap::default() } else { self.positions(&nreq) };
+        reqs.par_iter()
+            .map(|(area, members, t)| {
+                if *area {
+                    let pieces = members
+                        .iter()
+                        .filter(|m| m.kind == ObjType::Way)
+                        .filter_map(|m| {
+                            let (nids, pts) = ways.get(&(m.id, *t))?.as_ref()?;
+                            if pts.iter().any(|p| p.is_none()) {
+                                return None;
+                            }
+                            Some((m.role.as_ref() == "inner", nids.clone(), pts.iter().map(|p| p.unwrap()).collect()))
+                        })
+                        .collect();
+                    return geom::assemble(pieces);
+                }
+                let mut parts = Vec::new();
+                for m in members.iter() {
+                    match m.kind {
+                        ObjType::Node => {
+                            if let Some(Some(p)) = nodes.get(&(m.id, *t)) {
+                                parts.push(Geom::Point(geom::e7(*p)));
+                            }
+                        }
+                        ObjType::Way => {
+                            if let Some(Some((_, pts))) = ways.get(&(m.id, *t)) {
+                                let l: Vec<P> = pts.iter().flatten().copied().collect();
+                                if !l.is_empty() {
+                                    parts.push(Geom::Line(l));
+                                }
+                            }
+                        }
+                        ObjType::Relation => {}
+                    }
+                }
+                Geom::Multi(parts)
+            })
+            .collect()
     }
 }

@@ -10,7 +10,7 @@ use crate::scan::{KindMask, ScanSpec, TimeMode};
 use crate::set::{Hints, Query, SetSrc, SetV};
 use crate::value::*;
 use knut_format::ObjType;
-use knut_lang::ast::{Expr, Kind, Mode, Quant, Threshold};
+use knut_lang::ast::{Expr, ExprKind, Kind, Mode, Quant, RelTail, Threshold};
 use knut_lang::diag::{Diagnostic, Header, Span, Text2};
 use knut_lang::units::Dim;
 use knut_plan::pushdown::TagPred;
@@ -244,6 +244,7 @@ pub fn standard_net(ctx: &Ctx, bbox: BBoxF, span: Span) -> R<Arc<Net>> {
 
 fn build_standard_net(ctx: &Ctx, bbox: BBoxF, span: Span) -> R<Arc<Net>> {
     let spec = ScanSpec {
+        bbox: None,
         kinds: KindMask { way: true, ..Default::default() },
         time: TimeMode::State(ctx.latest()),
         region: Some(Arc::new(Region::Box(bbox))),
@@ -497,4 +498,71 @@ pub fn point_of(ctx: &Ctx, v: &Value) -> Option<P> {
 
 pub fn kind_any() -> Kind {
     Kind::Any
+}
+
+/// A box that every match of `var` must intersect, derived from the conjuncts of the
+/// condition: `var within X`, `var overlapping X` and `var near some/all _ in S closer than d`
+/// with closed X and S. The scan skips blocks and segments outside it.
+pub fn scan_hint(ctx: &Ctx, preds: &[&'static Expr], var: &str, sc: &Sc) -> R<Option<BBoxF>> {
+    fn conjuncts(e: &'static Expr, out: &mut Vec<&'static Expr>) {
+        match &e.kind {
+            ExprKind::And(a, b) => {
+                conjuncts(a, out);
+                conjuncts(b, out);
+            }
+            _ => out.push(e),
+        }
+    }
+    let mut cs = Vec::new();
+    for p in preds {
+        conjuncts(p, &mut cs);
+    }
+    let mut hint: Option<BBoxF> = None;
+    let mut add = |b: BBoxF| {
+        hint = Some(match hint {
+            None => b,
+            Some(h) => BBoxF { minx: h.minx.max(b.minx), miny: h.miny.max(b.miny), maxx: h.maxx.min(b.maxx), maxy: h.maxy.min(b.maxy) },
+        });
+    };
+    for c in cs {
+        let ExprKind::Rel(l, tail) = &c.kind else { continue };
+        if !matches!(&l.kind, ExprKind::Ident(v) if v == var) {
+            continue;
+        }
+        match tail {
+            RelTail::Within(x) | RelTail::Overlapping(x) if ctx.closed(x) => {
+                let v = ctx.eval(x, sc)?;
+                if v.is_none() {
+                    continue;
+                }
+                let b = ctx.region_of(&v, x.span)?.bbox();
+                if !b.is_empty() {
+                    add(b);
+                }
+            }
+            RelTail::Near { quant: Quant::Some | Quant::All, set, threshold } if ctx.closed(set) && threshold.as_ref().is_none_or(|t| ctx.closed(&t.value)) => {
+                let (d, dim, _, mode, _, _) = threshold_value(ctx, threshold.as_ref(), sc)?;
+                let radius = match (mode, dim) {
+                    (None, _) => d,
+                    (Some(m), Dim::TIME) => d * speed(m),
+                    (Some(_), _) => d,
+                };
+                if !radius.is_finite() {
+                    continue;
+                }
+                let sv = ctx.eval(set, sc)?;
+                let st = ctx.as_set(&sv, set.span)?;
+                let ix = geo_index(ctx, &st, set.span)?;
+                let mut b = BBoxF::EMPTY;
+                for (_, _, bb) in &ix.items {
+                    b.union(bb);
+                }
+                // an empty set: nothing is near some member
+                // a little more than the radius: expand_m uses a slightly different metre per degree
+                add(if b.is_empty() { BBoxF::EMPTY } else { b.expand_m(radius * 1.01 + 1.0) });
+            }
+            _ => {}
+        }
+    }
+    Ok(hint)
 }
