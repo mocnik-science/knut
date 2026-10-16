@@ -121,15 +121,15 @@
  },
  {
   "category": "Tags and conditions",
-  "title": "Text fields",
-  "description": "`.length` of a text counts its characters.",
-  "code": "average of (nodes n with n:amenity=restaurant and n:name).map(n => n:name.length)"
+  "title": "Names in capitals",
+  "description": "`.upper` turns a text into capitals: restaurants whose name is written all in capitals, often a sign to tidy up.",
+  "code": "count of nodes n with n:amenity=restaurant and n:name and n:name == n:name.upper"
  },
  {
   "category": "Tags and conditions",
   "title": "Ranges",
-  "description": "`between … and` includes both ends.",
-  "code": "count of nodes n with n:amenity=bench and n.version between 2 and 5"
+  "description": "`between … and` includes both ends: buildings with three to five storeys.",
+  "code": "count of areas b with b:building and b:building:levels between 3 and 5"
  },
  {
   "category": "Units",
@@ -218,8 +218,8 @@
  {
   "category": "Time",
   "title": "Relative dates",
-  "description": "`… before` and `… after` shift a date.",
-  "code": "count of nodes n with n:amenity=bench on 365 days before 2024-01-01"
+  "description": "`… before` and `… after` shift a date: the benches a year before the start of 2024, and at its start.",
+  "code": "count of nodes n with n:amenity=bench on 12 months before 2024-01-01, count of nodes n with n:amenity=bench on 2024-01-01"
  },
  {
   "category": "Time",
@@ -266,8 +266,8 @@
  {
   "category": "History and sequences",
   "title": "All versions of an object",
-  "description": "`.versions` lists every version of an element.",
-  "code": "count of (pick way w with w:highway=motorway).versions"
+  "description": "`.versions` lists every version of an element: how often the main station has been edited (change the name for other databases).",
+  "code": "count of (pick node n with n:railway=station and n:name='Bremen Hauptbahnhof').versions"
  },
  {
   "category": "History and sequences",
@@ -332,8 +332,8 @@
  {
   "category": "Spatial",
   "title": "Nearest",
-  "description": "`nearest of S to x` is the closest element of S.",
-  "code": "schools = * s with s:amenity=school\n(pick 20 nodes n with n:amenity=bench).map(b => (nearest of schools to b):name)"
+  "description": "`nearest of S to x` is the closest element of S: the nearest bus stop of every school in a part of town.",
+  "code": "stops = nodes s with s:highway=bus_stop\n(areas a with a:amenity=school within Vegesack).map(a => [a:name, (nearest of stops to a):name])"
  },
  {
   "category": "Spatial",
@@ -344,14 +344,14 @@
  {
   "category": "Spatial",
   "title": "Overlapping",
-  "description": "Buildings whose outline overlaps a given area.",
-  "code": "campus = pick area a with a:amenity=university\nareas b with b:building and b overlapping campus"
+  "description": "Buildings whose outline overlaps a given area: the buildings on a university campus (change the name for other databases).",
+  "code": "campus = pick area a with a:amenity=university and a:name='Universität Bremen'\nareas b with b:building and b overlapping campus"
  },
  {
   "category": "Spatial",
   "title": "Coordinates",
-  "description": "`.lon` and `.lat` of the representative point (for areas a point inside).",
-  "code": "(pick 5 areas a with a:amenity=school).map(a => [a.lon, a.lat])"
+  "description": "`.lon` and `.lat` of the representative point (for areas a point inside): the schools of a part of town with their coordinates.",
+  "code": "(areas a with a:amenity=school within Vegesack).map(a => [a:name, a.lon, a.lat])"
  },
  {
   "category": "Spatial",
@@ -392,14 +392,14 @@
  {
   "category": "Routing",
   "title": "Walking route",
-  "description": "Shortest path on the street network from a library to the main station; `.length` and `.duration` describe it (change the name for other databases).",
-  "code": "a = pick node n with n:amenity=library\nb = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\np = path P from a to b by foot\np.length, p.duration\np"
+  "description": "Shortest path on the street network from the main station to the nearest library; `.length` and `.duration` describe it (change the name for other databases).",
+  "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nlibrary = nearest of (* l with l:amenity=library) to s\np = path P from s to library by foot\nlibrary:name, p.length, p.duration\np"
  },
  {
   "category": "Routing",
   "title": "Cycling route",
   "description": "The same by bicycle (15 km/h, one-way streets respected).",
-  "code": "a = pick node n with n:amenity=library\nb = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\npath P from a to b by bicycle"
+  "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nlibrary = nearest of (* l with l:amenity=library) to s\npath P from s to library by bicycle"
  },
  {
   "category": "Routing",
@@ -463,9 +463,9 @@
  },
  {
   "category": "Grouping",
-  "title": "Two levels",
-  "description": "Several `per` group by several keys.",
-  "code": "count of nodes s with s:shop in [bakery, supermarket] per s:shop per year from 2015 to 2024"
+  "title": "Time series per value",
+  "description": "`on each year` and `per` together: the number of bakeries and of supermarkets at the start of every year.",
+  "code": "count of nodes s with s:shop in [bakery, supermarket] on each year from 2015 to 2024 per s:shop"
  },
  {
   "category": "Grouping",
@@ -476,8 +476,8 @@
  {
   "category": "Grouping",
   "title": "Chunks",
-  "description": "`per chunk of N` cuts an ordered set into pieces of N.",
-  "code": "count of nodes n with n:amenity=bench per chunk of 1000 ordered by n.id"
+  "description": "`per chunk of N` cuts an ordered set into pieces of N: the benches sorted by their last edit, in batches of 500, with the time of the last edit in each batch: how up to date the data is.",
+  "code": "latest of nodes n with n:amenity=bench per chunk of 500 ordered by n.time"
  },
  {
   "category": "Statistics",
@@ -518,14 +518,14 @@
  {
   "category": "Statistics",
   "title": "Correlation",
-  "description": "Pearson correlation of two time series, paired by year.",
-  "code": "correlate (count of nodes n with n:amenity=bench per year from 2010 to 2024) with (count of nodes n with n:amenity=waste_basket per year from 2010 to 2024)"
+  "description": "Pearson correlation of two time series, paired by year: the numbers of benches and of waste baskets.",
+  "code": "correlate (count of nodes n with n:amenity=bench on each year from 2010 to 2024) with (count of nodes n with n:amenity=waste_basket on each year from 2010 to 2024)"
  },
  {
   "category": "Statistics",
   "title": "Regression",
-  "description": "Least squares: slope, intercept and r².",
-  "code": "regress (count of nodes n with n:amenity=bench per year from 2010 to 2024) on (count of nodes n with n:amenity=waste_basket per year from 2010 to 2024)"
+  "description": "Least squares: slope, intercept and r², here how many benches come with each waste basket over the years.",
+  "code": "regress (count of nodes n with n:amenity=bench on each year from 2010 to 2024) on (count of nodes n with n:amenity=waste_basket on each year from 2010 to 2024)"
  },
  {
   "category": "Statistics",
@@ -578,14 +578,14 @@
  {
   "category": "Advanced",
   "title": "Own fields",
-  "description": "`define` adds a field to all elements of a kind.",
-  "code": "define node N: edits = N.version - 1\naverage of (nodes n with n:amenity=bench).map(n => n.edits)"
+  "description": "`define` adds a field to all elements of a kind: the floor area of a building (footprint times storeys, one storey if unknown), summed over a part of town.",
+  "code": "define area B: floor_area = B.area * (B:building:levels ?? 1)\nsum of (areas b with b:building within Vegesack).map(b => b.floor_area)"
  },
  {
   "category": "Advanced",
   "title": "Transitions",
-  "description": "How the class of a road changed over its versions.",
-  "code": "w = pick way w with w:highway and w.version > 10\ntransitions of w.versions.map(v => v:highway)"
+  "description": "How the class of a road changed over its versions: the most edited section of a street (change the name for other databases).",
+  "code": "w = pick way w with w:highway and w:name='Am Wall' ordered by -w.version\ntransitions of w.versions.map(v => v:highway)"
  },
  {
   "category": "Advanced",
