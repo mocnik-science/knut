@@ -24,7 +24,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "2026.10.3"
+version = "2026.10.4"
 edition = "2024"
 license = "MIT"
 rust-version = "1.85"
@@ -33,13 +33,13 @@ readme = "README.md"
 keywords = ["openstreetmap", "query-language"]
 
 [workspace.dependencies]
-knut-format = { path = "crates/knut-format", version = "2026.10.3" }
-knut-builder = { path = "crates/knut-builder", version = "2026.10.3" }
-knut = { path = "crates/knut", version = "2026.10.3" }
-knut-lang = { path = "crates/knut-lang", version = "2026.10.3" }
-knut-plan = { path = "crates/knut-plan", version = "2026.10.3" }
-knut-exec = { path = "crates/knut-exec", version = "2026.10.3" }
-knut-web = { path = "crates/knut-web", version = "2026.10.3" }
+knut-format = { path = "crates/knut-format", version = "2026.10.4" }
+knut-builder = { path = "crates/knut-builder", version = "2026.10.4" }
+knut = { path = "crates/knut", version = "2026.10.4" }
+knut-lang = { path = "crates/knut-lang", version = "2026.10.4" }
+knut-plan = { path = "crates/knut-plan", version = "2026.10.4" }
+knut-exec = { path = "crates/knut-exec", version = "2026.10.4" }
+knut-web = { path = "crates/knut-web", version = "2026.10.4" }
 thiserror = "2"
 rustc-hash = "2"
 anyhow = "1"
