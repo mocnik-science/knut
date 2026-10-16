@@ -171,6 +171,7 @@ pub fn build_network(db: &Db, ctl: Option<&crate::control::Control>) -> R<Routin
         pred: TagPred::Has("highway".into()),
         need_geom: true,
         need_hist: false,
+        attrs_history: false,
     };
     let parts = scan::fold(db, ctl, &spec, &Part::default, &|acc: &mut Part, it: Item| {
         let Item::Elem(e) = it else { return Ok(()) };
@@ -467,6 +468,7 @@ fn snap_scan(db: &Db, net: &RoutingNet, p: P, m: Mode) -> Option<Snap> {
             pred: TagPred::Has("highway".into()),
             need_geom: true,
             need_hist: false,
+            attrs_history: false,
         };
         let found = scan::fold(db, None, &spec, &Vec::new, &|acc: &mut Vec<(f64, i64, usize, P)>, it: Item| {
             let Item::Elem(e) = it else { return Ok(()) };

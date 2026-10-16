@@ -134,7 +134,7 @@ impl GeoIndex {
 pub fn geo_index(ctx: &Ctx, set: &Arc<SetV>, span: Span) -> R<Arc<GeoIndex>> {
     let slot = lock(&ctx.caches.geo).entry(Arc::as_ptr(set) as usize).or_insert_with(|| (set.clone(), Default::default())).1.clone();
     crate::cache::get_or_build(&slot, || {
-        let items = set.items(ctx, Hints { geom: true, hist: false })?;
+        let items = set.items(ctx, Hints { geom: true, ..Default::default() })?;
         ctx.preload_geoms(&items);
         let mut v = Vec::with_capacity(items.len());
         for it in items.iter() {
@@ -251,6 +251,7 @@ fn build_standard_net(ctx: &Ctx, bbox: BBoxF, span: Span) -> R<Arc<Net>> {
         pred: TagPred::Has("highway".into()),
         need_geom: false,
         need_hist: false,
+        attrs_history: false,
     };
     let q = Query { spec, vars: vec!["_".into()], preds: vec![], scope: None, seq: None };
     let set = SetV::lazy(SetSrc::Query(Arc::new(q)));
@@ -318,7 +319,7 @@ pub fn net_nearest(ctx: &Ctx, set: &Arc<SetV>, mode: Mode, metric: Metric, using
 
 #[allow(clippy::too_many_arguments)]
 fn build_net_nearest(ctx: &Ctx, set: &Arc<SetV>, mode: Mode, metric: Metric, using: Option<&'static Expr>, radius_m: f64, sc: &Sc, span: Span) -> R<Arc<NetNearest>> {
-    let items = set.items(ctx, Hints { geom: true, hist: false })?;
+    let items = set.items(ctx, Hints { geom: true, ..Default::default() })?;
     let mut bb = BBoxF::EMPTY;
     for it in items.iter() {
         if let Some(p) = ctx.rep_point(it) {
@@ -428,7 +429,7 @@ pub fn near(ctx: &Ctx, l: &'static Expr, quant: Quant, set_e: &'static Expr, th:
                     Ok(Value::Bool((quant == Quant::Some) == hit))
                 }
                 Quant::All => {
-                    let items = set.items(ctx, Hints { geom: true, hist: false })?;
+                    let items = set.items(ctx, Hints { geom: true, ..Default::default() })?;
                     let mut bb = BBoxF::EMPTY;
                     bb.add(px);
                     let net = network(ctx, m, using, bb.expand_m(radius), sc, span)?;
@@ -456,7 +457,7 @@ pub fn near(ctx: &Ctx, l: &'static Expr, quant: Quant, set_e: &'static Expr, th:
 }
 
 fn net_nearest_uncached(ctx: &Ctx, set: &Arc<SetV>, m: Mode, metric: Metric, net: &Net) -> R<(Vec<f64>, Vec<u32>)> {
-    let items = set.items(ctx, Hints { geom: true, hist: false })?;
+    let items = set.items(ctx, Hints { geom: true, ..Default::default() })?;
     let mut sources = Vec::new();
     for (i, it) in items.iter().enumerate() {
         if let Some(p) = ctx.rep_point(it)

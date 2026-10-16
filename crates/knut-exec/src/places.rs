@@ -55,6 +55,7 @@ fn spec(db: &crate::db::Db) -> ScanSpec {
         pred: TagPred::Or(vec![TagPred::Has("boundary".into()), TagPred::Has("place".into()), TagPred::Has("ISO3166-1".into())]),
         need_geom: false,
         need_hist: false,
+        attrs_history: false,
     }
 }
 

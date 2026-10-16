@@ -75,6 +75,9 @@ pub struct ScanSpec {
     pub pred: TagPred,
     pub need_geom: bool,
     pub need_hist: bool,
+    /// The whole history is needed only for its attributes (tags, version, time, user):
+    /// blocks are then decoded without their geometry (ways without node lists).
+    pub attrs_history: bool,
 }
 
 pub enum Item {
@@ -365,7 +368,7 @@ fn block_cands(db: &Db, spec: &ScanSpec, no: u32, sink: &mut dyn FnMut(Item) -> 
     }
     let history = matches!(spec.time, TimeMode::History);
     let needs_nodes = ot == ObjType::Way && (spec.kinds.area || spec.kinds.any);
-    let attr = !spec.need_geom && cover == Cover::Inside && !private && !needs_nodes && !history && ot != ObjType::Relation;
+    let attr = !spec.need_geom && cover == Cover::Inside && !private && !needs_nodes && (!history || spec.attrs_history) && ot != ObjType::Relation;
     let pred = &spec.pred;
     let tags = |t: &Tags| pred.eval(t);
     let time = spec.time.clone();

@@ -355,7 +355,7 @@ pub fn json(ctx: &Ctx, v: &Value) -> R<serde_json::Value> {
         Value::Tuple(t) => J::Array(t.items.iter().map(|e| json(ctx, &Value::Elem(e.clone()))).collect::<R<Vec<_>>>()?),
         Value::Set(_) | Value::List(_) => {
             // geometry for all elements in one pass
-            let items = ctx.items_of(v, Hints { geom: true, hist: false }, knut_lang::diag::Span::default())?;
+            let items = ctx.items_of(v, Hints { geom: true, ..Default::default() }, knut_lang::diag::Span::default())?;
             ctx.preload_geoms(&items);
             J::Array(items.iter().map(|x| json(ctx, x)).collect::<R<Vec<_>>>()?)
         }

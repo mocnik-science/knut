@@ -436,6 +436,7 @@ impl Ctx {
                     pred: TagPred::True,
                     need_geom: false,
                     need_hist: false,
+                    attrs_history: false,
                 };
                 let q = Query { spec, vars: vec!["_".into()], preds: vec![], scope: None, seq: None };
                 Ok(Value::Set(Arc::new(SetV::lazy(SetSrc::Query(Arc::new(q))))))
@@ -689,7 +690,7 @@ impl Ctx {
                     }
                     return Ok(Value::Grouped(Arc::new(Grouped { key_names: g.key_names.clone(), value_name: g.value_name.clone(), rows })));
                 }
-                let items = self.items_of(&b, Hints { geom: true, hist: false }, base.span)?;
+                let items = self.items_of(&b, Hints { geom: true, ..Default::default() }, base.span)?;
                 if args.first().is_some_and(uses_geom) {
                     self.preload_geoms(&items);
                 }
@@ -951,7 +952,7 @@ impl Ctx {
                 Arc::new(Region::from_geom(g, e.label()))
             }
             Value::Set(_) | Value::List(_) => {
-                let items = self.items_of(v, Hints { geom: true, hist: false }, span)?;
+                let items = self.items_of(v, Hints { geom: true, ..Default::default() }, span)?;
                 self.preload_geoms(&items);
                 let mut rs = Vec::new();
                 let mut bb = geom::BBoxF::EMPTY;
@@ -1110,6 +1111,8 @@ impl Ctx {
                     kinds: s.pattern.iter().map(|p| EKind::from_kind(p.kind).unwrap_or(EKind::Way)).collect(),
                     max_dt,
                     names: vars.clone().into(),
+                    differ: differing_tags(&preds, &vars),
+                    attrs_only: preds.iter().all(|p| only_attributes(p, &vars)),
                     t_range: match &time {
                         TimeMode::Events(a, b) => Some((*a, *b)),
                         _ => None,
@@ -1121,7 +1124,7 @@ impl Ctx {
                 None => None,
             };
             let time = if seq.is_some() { TimeMode::History } else { time };
-            let spec = ScanSpec { kinds, time, region, bbox, pred, need_geom, need_hist };
+            let spec = ScanSpec { kinds, time, region, bbox, pred, need_geom, need_hist, attrs_history: false };
             let preds = if exact && s.pattern.len() == 1 { Vec::new() } else { preds };
             let q = Query { spec, vars: vars.clone(), preds, scope: sc.clone(), seq };
             Arc::new(SetV::lazy(SetSrc::Query(Arc::new(q))))
@@ -1314,7 +1317,7 @@ pub fn rand_rank(seed: u64, v: &Value) -> u64 {
 pub fn pick_n(ctx: &Ctx, set: &Arc<SetV>, n: usize, seed: Option<u64>, order: Option<&'static Expr>, vars: &[String]) -> R<Vec<Value>> {
     if let Some(order) = order {
         let geom = uses_geom(order);
-        let items = set.items(ctx, Hints { geom, hist: false })?;
+        let items = set.items(ctx, Hints { geom, ..Default::default() })?;
         if geom {
             ctx.preload_geoms(&items);
         }
@@ -1352,6 +1355,50 @@ pub fn pick_n(ctx: &Ctx, set: &Arc<SetV>, n: usize, seed: Option<u64>, order: Op
 }
 
 /// Sliding windows of consecutive versions (`A -> B -> C`).
+/// True if `e` uses the pattern variables only for tags and plain fields of their version.
+fn only_attributes(e: &Expr, vars: &[String]) -> bool {
+    const PLAIN: &[&str] = &["id", "version", "time", "user", "uid", "changeset", "deleted", "type", "osmType", "creator", "unchangedBefore", "unchangedAfter", "keys"];
+    let is_var = |x: &Expr| matches!(&x.kind, ExprKind::Ident(n) if vars.contains(n));
+    match &e.kind {
+        ExprKind::Tag(b, k, _) if is_var(b) => match k {
+            TagKey::Lit(_) => true,
+            TagKey::Expr(k) => only_attributes(k, vars),
+        },
+        ExprKind::Field(b, name, _) if is_var(b) => PLAIN.contains(&name.as_str()),
+        ExprKind::Ident(n) => !vars.contains(n),
+        _ => e.children().into_iter().all(|c| only_attributes(c, vars)),
+    }
+}
+
+/// The conditions `X:k != Y:k2` (tags of two pattern variables, literal keys, no units) among
+/// the conjuncts of `preds`.
+fn differing_tags(preds: &[&'static Expr], vars: &[String]) -> Vec<(usize, String, usize, String)> {
+    fn tag_of(e: &Expr, vars: &[String]) -> Option<(usize, String)> {
+        let ExprKind::Tag(base, TagKey::Lit(k), None) = &e.kind else { return None };
+        let ExprKind::Ident(n) = &base.kind else { return None };
+        Some((vars.iter().position(|v| v == n)?, k.clone()))
+    }
+    fn walk(e: &Expr, vars: &[String], out: &mut Vec<(usize, String, usize, String)>) {
+        match &e.kind {
+            ExprKind::And(a, b) => {
+                walk(a, vars, out);
+                walk(b, vars, out);
+            }
+            ExprKind::Rel(l, RelTail::Cmp(CmpOp::Ne, r)) => {
+                if let (Some((i, ki)), Some((j, kj))) = (tag_of(l, vars), tag_of(r, vars)) {
+                    out.push((i, ki, j, kj));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for p in preds {
+        walk(p, vars, &mut out);
+    }
+    out
+}
+
 pub fn match_sequence(ctx: &Ctx, q: &Query, seq: &Seq, h: &Arc<Hist>, f: &mut dyn FnMut(Value) -> R<()>) -> R<()> {
     let k = seq.kinds.len();
     let n = h.versions.len();
@@ -1382,6 +1429,13 @@ pub fn match_sequence(ctx: &Ctx, q: &Query, seq: &Seq, h: &Arc<Hist>, f: &mut dy
                 continue;
             }
         }
+        // `X:k != Y:k2` is false when a tag is missing or both are the same text
+        if seq.differ.iter().any(|(i, ki, j, kj)| match (win[*i].tag(ki), win[*j].tag(kj)) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        }) {
+            continue;
+        }
         let items: Vec<Arc<Elem>> = win
             .iter()
             .zip(&seq.kinds)
@@ -1397,11 +1451,12 @@ pub fn match_sequence(ctx: &Ctx, q: &Query, seq: &Seq, h: &Arc<Hist>, f: &mut dy
                 continue;
             }
         }
-        let t = Value::Tuple(Arc::new(Tuple { names: seq.names.clone(), items: items.clone() }));
+        let first = items[0].clone();
+        let t = Value::Tuple(Arc::new(Tuple { names: seq.names.clone(), items }));
         let sc = ctx.bind_elem(&q.scope, &q.vars, &t);
         let mut ok = true;
         for p in &q.preds {
-            if !ctx.truthy(p, &sc).map_err(|e| e.at(&items[0]))? {
+            if !ctx.truthy(p, &sc).map_err(|e| e.at(&first))? {
                 ok = false;
                 break;
             }

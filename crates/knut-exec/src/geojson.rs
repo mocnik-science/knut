@@ -132,7 +132,7 @@ impl Builder<'_> {
                 }
             }
             Value::Set(_) | Value::List(_) => {
-                let items = self.ctx.items_of(v, Hints { geom: true, hist: false }, Span::default())?;
+                let items = self.ctx.items_of(v, Hints { geom: true, ..Default::default() }, Span::default())?;
                 self.ctx.preload_geoms(&items[..items.len().min(self.max + 1)]);
                 for it in items.iter() {
                     if self.out.len() >= self.max {

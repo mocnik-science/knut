@@ -14,6 +14,8 @@ use std::sync::{Arc, OnceLock};
 pub struct Hints {
     pub geom: bool,
     pub hist: bool,
+    /// The consumer only counts the elements (it uses nothing of them).
+    pub count_only: bool,
 }
 
 /// A database query: scan plus the selection's own conditions.
@@ -34,6 +36,13 @@ pub struct Seq {
     pub kinds: Vec<EKind>,
     pub max_dt: Option<(f64, bool)>,
     pub names: Arc<[String]>,
+    /// Conditions `X:k != Y:k2` among the conditions (positions and keys): a window is
+    /// skipped before its elements are built when a tag is missing or both are the same
+    /// text (`!=` is then false).
+    pub differ: Vec<(usize, String, usize, String)>,
+    /// The conditions use the pattern variables only for tags and plain fields (no
+    /// geometry, node lists or other versions).
+    pub attrs_only: bool,
     pub t_range: Option<(i64, i64)>,
 }
 
@@ -223,6 +232,9 @@ fn fold_query<A: Send>(ctx: &Ctx, q: &Query, hints: Hints, init: &(dyn Fn() -> A
     let mut spec = q.spec.clone();
     spec.need_geom |= hints.geom;
     spec.need_hist |= hints.hist;
+    // a sequence that is only counted and whose conditions need only attributes: the
+    // history without geometry
+    spec.attrs_history = hints.count_only && !spec.need_geom && q.seq.as_ref().is_some_and(|s| s.attrs_only);
     let wrapped = |acc: &mut A, it: Item| -> R<()> {
         match it {
             Item::Elem(e) => {

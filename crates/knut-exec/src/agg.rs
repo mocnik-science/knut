@@ -226,7 +226,7 @@ struct AreaIndex {
 }
 
 fn area_index(ctx: &Ctx, v: &Value, span: Span) -> R<AreaIndex> {
-    let items = ctx.items_of(v, Hints { geom: true, hist: false }, span)?;
+    let items = ctx.items_of(v, Hints { geom: true, ..Default::default() }, span)?;
     let mut areas = Vec::new();
     for it in items.iter() {
         let r = ctx.region_of(it, span)?;
@@ -480,6 +480,7 @@ fn of_values(
     }
     let share_pred = measured;
     let ordered = chunk.is_some() || matches!(func, OfFunc::Transitions);
+    hints.count_only = matches!(func, OfFunc::Count) && gk.is_empty() && share_pred.is_none() && share_region.is_none() && !hints.geom;
     let item_value = |v: &Value| -> Value {
         match (func, v) {
             (OfFunc::Spread | OfFunc::Density | OfFunc::Count | OfFunc::Share | OfFunc::Earliest | OfFunc::Latest, _) => v.clone(),

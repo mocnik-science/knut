@@ -284,7 +284,7 @@ pub fn eval(ctx: &Ctx, e: &'static Expr, s: &'static Special, sc: &Sc) -> R<Valu
             let sv = ctx.eval(set, sc)?;
             let lf = ctx.eval(label, sc)?;
             let ff = ctx.eval(features, sc)?;
-            let items = ctx.items_of(&sv, Hints { geom: true, hist: false }, set.span)?;
+            let items = ctx.items_of(&sv, Hints { geom: true, ..Default::default() }, set.span)?;
             ctx.preload_geoms(&items);
             // `x.lon, x.lat` next to each other in the feature list form one place
             let pairs = lon_lat_pairs(features);
@@ -464,6 +464,7 @@ pub fn key_stats(db: &crate::db::Db, ctl: Option<&crate::control::Control>, t: i
         pred: TagPred::Not(Box::new(TagPred::False)),
         need_geom: false,
         need_hist: false,
+        attrs_history: false,
     };
     type Acc = HashMap<Arc<str>, (u64, HashSet<u64>)>;
     let parts = scan::fold(db, ctl, &spec, &Acc::default, &|acc: &mut Acc, it: Item| {

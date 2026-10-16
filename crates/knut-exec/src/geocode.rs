@@ -224,6 +224,7 @@ fn state_spec(db: &Db, pred: TagPred) -> ScanSpec {
         pred,
         need_geom: false,
         need_hist: false,
+        attrs_history: false,
     }
 }
 
