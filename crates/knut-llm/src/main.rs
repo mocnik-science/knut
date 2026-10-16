@@ -1,4 +1,4 @@
-//! `knut-llm`: a local language model for the simple page of `knut web` (questions in plain
+//! `knut-llm`: a local language model for the text interface of `knut web` (questions in plain
 //! language). It serves Qwen3-1.7B (Apache 2.0) through the OpenAI-compatible chat API that
 //! `knut web` speaks, computed with candle (Metal on macOS, else the CPU). The model is
 //! downloaded from Hugging Face on the first start and kept in `~/.cache/knut/models`.

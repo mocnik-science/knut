@@ -1,6 +1,6 @@
 [package]
 name = "knut-llm"
-description = "Local language model for the simple page of knut web (questions in plain language)"
+description = "Local language model for the text interface of knut web (questions in plain language)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,4 +1,4 @@
-//! Training data and evaluation for the language model of the simple page of `knut web`.
+//! Training data and evaluation for the language model of the text interface of `knut web`.
 //!
 //! `knut-train generate` makes questions from templates with the places, stations and years
 //! of real databases, runs every query (only queries that run are kept) and writes chat
@@ -368,9 +368,8 @@ fn generate(args: &[String]) -> Result<(), String> {
                     let k = Kept { item, db: di, results, answer };
                     if is_held { held.push(k) } else { kept.push(k) }
                 }
-                if got < want {
-                    eprintln!("  {name}{}: {got} of {want}", if is_held { " (held out)" } else { "" });
-                }
+                // progress: one line per template
+                eprintln!("  {name}{}: {got} of {want} ({tries} tried, {:.0} s so far)", if is_held { " (held out)" } else { "" }, started.elapsed().as_secs_f64());
             }
         }
         eprintln!("{}: {} questions in {:.0} s", d.path.display(), kept.iter().chain(&held).filter(|k| k.db == di).count(), started.elapsed().as_secs_f64());

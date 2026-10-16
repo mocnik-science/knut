@@ -1,4 +1,4 @@
-//! Questions in plain language (the simple page): a language model turns a question into a
+//! Questions in plain language (the text interface): a language model turns a question into a
 //! knut query or asks back when something essential is missing; the query is checked, and
 //! the model corrects it from the messages (a few times at most); then it runs, and the model
 //! answers the question from the results.

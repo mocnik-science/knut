@@ -291,9 +291,15 @@ input[type=search], input.text {
 .popup td:first-child { color: var(--fg-soft); white-space: nowrap; }
 .popup td:last-child { font-family: var(--mono); word-break: break-word; }
 
-/* ----- simple page: questions in plain language ------------------------------------- */
+/* ----- text interface: questions in plain language ---------------------------------- */
 
 .chat { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; }
+/* the logo in the top left corner after the first question (fading in), not a control */
+.chat-brand {
+  position: absolute; top: 8px; left: 14px; height: 34px; width: auto; z-index: 1; pointer-events: none; user-select: none;
+  opacity: 0; transition: opacity 0.6s ease;
+}
+.chat-brand.shown { opacity: 1; }
 .chat-top { position: absolute; top: 12px; right: 14px; display: flex; align-items: center; gap: 4px; z-index: 1; color: var(--fg-soft); }
 .chat-top .sep { margin: 0 4px; opacity: 0.6; user-select: none; }
 .chat-top button.word { border: none; background: none; padding: 2px 4px; font-size: 12px; color: var(--fg-soft); }
@@ -304,6 +310,23 @@ input[type=search], input.text {
 .chat-top button.icon.active { color: var(--fg); }
 .chat .turns { flex: 1; overflow: auto; padding: 56px 16px 12px; }
 .chat .turn { max-width: 760px; margin: 0 auto 22px; }
+/* copy symbols: next to the question (right) and the answer (left), shown under the mouse */
+.chat .question-row, .chat .answer-row { position: relative; }
+.chat .question-row { width: fit-content; max-width: 85%; margin-left: auto; padding-right: 0; }
+.chat .question-row .question { max-width: none; }
+.chat button.copy {
+  position: absolute; top: 50%; transform: translateY(-50%); padding: 4px; line-height: 0; border: none; background: none;
+  color: var(--fg-soft); opacity: 0; transition: opacity 0.15s ease; cursor: pointer;
+}
+.chat button.copy:hover { color: var(--fg); }
+.chat .question-row .copy { left: 100%; margin-left: 2px; }
+.chat .answer-row .copy { right: 100%; margin-right: 2px; top: 0; transform: none; padding-top: 3px; }
+/* the area that shows the symbol reaches a little beyond the text, over the symbol */
+.chat .question-row::after { content: ""; position: absolute; top: 0; bottom: 0; left: 100%; width: 32px; }
+.chat .answer-row::before { content: ""; position: absolute; top: 0; bottom: 0; right: 100%; width: 32px; }
+.chat .question-row:hover .copy, .chat .answer-row:hover .copy, .chat button.copy:focus-visible { opacity: 1; }
+/* narrow windows: room at the sides for the symbols */
+@media (max-width: 840px) { .chat .turn { padding: 0 26px; } }
 .chat .question { margin-left: auto; width: fit-content; max-width: 85%; background: var(--bg-soft); border: 1px solid var(--border); border-radius: 14px; padding: 8px 12px; white-space: pre-wrap; }
 .chat .reply { margin-top: 10px; }
 .chat .answer { margin: 0 0 6px; font-size: 15px; line-height: 1.55; white-space: pre-wrap; }
@@ -311,10 +334,14 @@ input[type=search], input.text {
 .chat .note.bad { color: var(--danger); white-space: pre-wrap; }
 .chat .note.busy::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
-.chat .query summary { cursor: pointer; color: var(--fg-soft); font-size: 12px; }
-.chat .query pre { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: var(--bg-code); font: 12px/1.45 var(--mono); white-space: pre-wrap; }
+.chat .query summary { cursor: pointer; color: var(--fg-soft); font-size: 12px; list-style: none; width: fit-content; margin-left: auto; }
+.chat .query summary::-webkit-details-marker { display: none; }
+.chat .query summary:hover { color: var(--fg); }
+/* the query, with the way to the editor in its top right corner */
+.chat .query-code { position: relative; }
+.chat .query pre { margin: 6px 0; padding: 8px 36px 8px 10px; border-radius: 6px; background: var(--bg-code); font: 12px/1.45 var(--mono); white-space: pre-wrap; }
+.chat .query-code button.icon { position: absolute; top: 4px; right: 4px; }
 .chat .problems { margin: 0; padding-left: 18px; color: var(--danger); }
-.chat .turn-tools { margin-top: 6px; }
 /* one field: the text, and the button as its right end */
 .chat-input {
   max-width: 760px; width: calc(100% - 32px); margin: 0 auto 18px; display: flex; align-items: stretch;

@@ -52,9 +52,12 @@ const ICONS = {
   settings: svg('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
   // About
   bird: svg('<path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="m20 7 2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/>'),
-  // the simple page: questions in plain language
+  // the text interface: questions in plain language
   chat: svg('<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>'),
-  // the advanced page: the query editor with the map
+  // copy to the clipboard, and done
+  copy: svg('<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>'),
+  check: svg('<path d="M20 6 9 17l-5-5"/>'),
+  // the advanced query editor
   rocket: svg('<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>'),
 };
 
@@ -331,7 +334,7 @@ const MapView = {
 
 // ----- application ----------------------------------------------------------------------
 
-// ----- simple page: questions in plain language ---------------------------------------
+// ----- text interface: questions in plain language ------------------------------------
 // A search field; a question goes to the language model, which writes a query (checked and
 // corrected on the server), runs it and answers; or asks back. Each turn can be opened in
 // the editor of the advanced page, with its results on the map.
@@ -416,10 +419,19 @@ const ChatView = {
       else if (e.key === "Escape" && busy.value) cancel();
     }
     onMounted(() => nextTick(() => { scrollDown(); input.value && input.value.focus(); }));
-    return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds, theme, THEMES, ICONS };
+    // copies a text; the symbol shows a check for a moment
+    const copied = ref(null);
+    function copy(text, id) {
+      if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+      copied.value = id;
+      setTimeout(() => { if (copied.value === id) copied.value = null; }, 1200);
+    }
+    return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds, theme, THEMES, ICONS, copied, copy };
   },
   template: `
     <div :class="['chat', { start: !turns.length }]">
+      <!-- the logo moves to the corner once the one in the middle is gone -->
+      <img :class="['chat-brand', { shown: turns.length }]" src="knut.svg" alt="" aria-hidden="true">
       <div class="chat-top">
         <template v-if="turns.length">
           <button class="word" :disabled="busy" title="Start a new conversation" @click="clear">New</button>
@@ -428,26 +440,35 @@ const ChatView = {
         <button v-for="t in THEMES" :key="t.id" :class="['icon', { active: theme === t.id }]" :title="t.title" :aria-label="t.title"
           :aria-pressed="theme === t.id" @click="theme = t.id" v-html="t.icon"></button>
         <span class="sep">|</span>
-        <button class="icon" title="Advanced: the query editor with the map" aria-label="Advanced" @click="emit('advanced')" v-html="ICONS.rocket"></button>
+        <button class="icon" title="Advanced query editor" aria-label="Advanced query editor" @click="emit('advanced')" v-html="ICONS.rocket"></button>
       </div>
       <div class="turns">
         <img v-if="!turns.length" class="chat-logo" src="knut.svg" alt="knut">
         <div v-for="(t, i) in turns" :key="i" class="turn">
-          <div class="question">{{ t.question }}</div>
+          <div class="question-row">
+            <div class="question">{{ t.question }}</div>
+            <button class="copy" :title="copied === 'q' + i ? 'Copied' : 'Copy'" aria-label="Copy the question" @click="copy(t.question, 'q' + i)"
+              v-html="copied === 'q' + i ? ICONS.check : ICONS.copy"></button>
+          </div>
           <div class="reply">
-            <p v-if="t.ask" class="answer">{{ t.ask }}</p>
-            <p v-else-if="t.answer" class="answer">{{ t.answer }}</p>
+            <div v-if="t.ask || t.answer" class="answer-row">
+              <button class="copy" :title="copied === 'a' + i ? 'Copied' : 'Copy'" aria-label="Copy the answer" @click="copy(t.ask || t.answer, 'a' + i)"
+                v-html="copied === 'a' + i ? ICONS.check : ICONS.copy"></button>
+              <p class="answer">{{ t.ask || t.answer }}</p>
+            </div>
             <p v-else-if="t.cancelled" class="note">Cancelled.</p>
             <p v-else-if="t.error" class="note bad">{{ t.error }}</p>
             <p v-else-if="busy && i === turns.length - 1" class="note busy">{{ label }} …</p>
+            <!-- right below the answer: the time it took; opened, the query and a way to the editor -->
             <details v-if="t.query" class="query">
-              <summary>Query<span v-if="t.seconds"> · {{ fmtSeconds(t.seconds) }}</span></summary>
-              <pre>{{ t.query }}</pre>
+              <summary :title="'The query' + (t.seconds ? ', computed in ' + fmtSeconds(t.seconds) : '')">{{ t.seconds ? fmtSeconds(t.seconds) : 'query' }}</summary>
+              <div class="query-code">
+                <pre>{{ t.query }}</pre>
+                <button v-if="!(busy && i === turns.length - 1)" class="icon" title="Open in the advanced query editor" aria-label="Open in the advanced query editor"
+                  @click="emit('open', t)" v-html="ICONS.rocket"></button>
+              </div>
               <ul v-if="t.problems && t.problems.length" class="problems"><li v-for="(p, k) in t.problems" :key="k"><pre>{{ p }}</pre></li></ul>
             </details>
-            <div v-if="t.query && !(busy && i === turns.length - 1)" class="turn-tools">
-              <button class="small" @click="emit('open', t)">{{ t.mapped ? 'Show on the map' : 'Open in the editor' }}</button>
-            </div>
           </div>
         </div>
       </div>
@@ -485,11 +506,12 @@ const App = {
       examples: [],
       filter: "",
       docs: "",
-      // "simple" (questions in plain language, if the server has a language model) or "advanced"
-      mode: load("mode", "simple"),
+      // "text" (the text interface: questions in plain language, if the server has a language
+      // model) or "advanced"; "simple" is the old name of "text"
+      mode: load("mode", "text") === "simple" ? "text" : load("mode", "text"),
     });
     watch(() => state.mode, v => store("mode", v));
-    const simple = computed(() => !!(state.info && state.info.chat) && state.mode === "simple");
+    const textMode = computed(() => !!(state.info && state.info.chat) && state.mode === "text");
     watch(() => state.query, v => store("query", v));
     watch(() => state.db, v => store("db", v));
 
@@ -652,7 +674,7 @@ const App = {
       if (!q) return state.examples;
       return state.examples.filter(e => (e.title + " " + e.description + " " + e.code + " " + e.category).toLowerCase().includes(q));
     });
-    // a turn of the simple page in the editor, its results on the map
+    // a turn of the text interface in the editor, its results on the map
     function openTurn(t) {
       state.mode = "advanced";
       state.tab = "query";
@@ -698,12 +720,12 @@ const App = {
     return {
       state, map, editorHost, goToLine, messageLines,
       run, cancel, reset, progressPct, progressLabel, progressRight, filtered, useExample,
-      summary, toggleLayer, zoomTo, saveJson, saveGeojson, copyText, COLORS, fmtSeconds, theme, simple, openTurn,
+      summary, toggleLayer, zoomTo, saveJson, saveGeojson, copyText, COLORS, fmtSeconds, theme, textMode, openTurn,
       themes: THEMES, ICONS,
     };
   },
   template: `
-    <ChatView v-if="simple" :info="state.info" :db="state.db" @advanced="state.mode = 'advanced'" @open="openTurn" />
+    <ChatView v-if="textMode" :info="state.info" :db="state.db" @advanced="state.mode = 'advanced'" @open="openTurn" />
     <MapView ref="map" :info="state.info" />
 
     <Panel side="left" label="the query panel">
@@ -717,8 +739,8 @@ const App = {
         </nav>
       </template>
       <template #tools>
-        <button v-if="state.info && state.info.chat" class="icon" title="Questions in plain language (simple page)" aria-label="Questions in plain language"
-          @click="state.mode = 'simple'" v-html="ICONS.chat"></button>
+        <button v-if="state.info && state.info.chat" class="icon" title="Text interface: questions in plain language" aria-label="Text interface"
+          @click="state.mode = 'text'" v-html="ICONS.chat"></button>
       </template>
 
       <div v-show="state.tab === 'query'" class="tabpane">

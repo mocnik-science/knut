@@ -140,7 +140,7 @@ struct WebArgs {
     #[arg(long)]
     style: Option<String>,
     /// Server of a language model with an OpenAI-compatible API (llama.cpp, Ollama, vLLM),
-    /// e.g. http://localhost:11434: enables the simple page for questions in plain language
+    /// e.g. http://localhost:11434: enables the text interface for questions in plain language
     #[arg(long)]
     llm: Option<String>,
     /// Name of the model on that server (default: qwen3:1.7b)
