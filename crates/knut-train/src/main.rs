@@ -38,6 +38,18 @@ usage:
 
 /// Seconds a query may run while generating.
 const QUERY_SECONDS: u64 = 30;
+/// Queries that take this long (or are stopped) are written to `slow.txt`: candidates for
+/// speeding up knut.
+const SLOW_SECONDS: f64 = 20.0;
+
+/// `slow.txt` in the output folder, once known.
+static SLOW: std::sync::OnceLock<std::sync::Mutex<std::fs::File>> = std::sync::OnceLock::new();
+
+fn slow_log(path: &std::path::Path) {
+    if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = SLOW.set(std::sync::Mutex::new(f));
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -97,8 +109,17 @@ impl Database {
             }
             c.cancel();
         });
+        let started = Instant::now();
         let r = knut_exec::run_collect(query, Some("query.knut"), &self.path, &self.options(Some(control)), 1000);
         done.store(true, Ordering::Relaxed);
+        let secs = started.elapsed().as_secs_f64();
+        if (secs >= SLOW_SECONDS || r.cancelled)
+            && let Some(f) = SLOW.get()
+            && let Ok(mut f) = f.lock()
+        {
+            let db = self.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let _ = writeln!(f, "{db}\t{secs:.1} s{}\t{}", if r.cancelled { " (stopped)" } else { "" }, query.replace('\n', " ⏎ "));
+        }
         r
     }
 
@@ -316,6 +337,7 @@ fn generate(args: &[String]) -> Result<(), String> {
     });
     let seed: u64 = opt(args, "--seed").map(|s| s.parse().map_err(|_| "--seed needs a number")).transpose()?.unwrap_or(1);
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    slow_log(&out.join("slow.txt"));
     let examples = knut_web::examples();
     let mut rng = Rng::new(seed);
     let mut databases = Vec::new();
@@ -540,6 +562,9 @@ fn eval(args: &[String]) -> Result<(), String> {
     cases.truncate(limit);
     let examples = knut_web::examples();
     let mut dbs: Vec<(PathBuf, Database)> = Vec::new();
+    if let Some(p) = opt(args, "--out") {
+        slow_log(&std::path::Path::new(p).with_file_name("slow.txt"));
+    }
     let mut out = match opt(args, "--out") {
         Some(p) => Some(std::io::BufWriter::new(std::fs::File::create(p).map_err(|e| e.to_string())?)),
         None => None,
