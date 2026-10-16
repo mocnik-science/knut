@@ -357,7 +357,9 @@ pub const TEMPLATES: &[(&str, usize, Template)] = &[
     ("count_all", 4, count_all),
     ("count_place", 10, count_place),
     ("show_place", 6, show_place),
+    ("which_place", 8, which_place),
     ("trend", 5, trend),
+    ("over_the_years", 4, over_the_years),
     ("at_date", 3, at_date),
     ("per_district", 4, per_district),
     ("route_nearest", 6, route_nearest),
@@ -378,6 +380,9 @@ pub const TEMPLATES: &[(&str, usize, Template)] = &[
     ("creators", 2, creators),
     ("two_counts", 3, two_counts),
     ("compare_places", 3, compare_places),
+    ("compare_years", 4, compare_years),
+    ("compare_things", 4, compare_things),
+    ("compare_places_map", 2, compare_places_map),
     ("per_value", 3, per_value),
     ("outside", 2, outside),
     ("follow_place", 4, follow_place),
@@ -392,7 +397,7 @@ pub const TEMPLATES: &[(&str, usize, Template)] = &[
     ("reverse_point", 4, reverse_point),
     ("near_point", 2, near_point),
     ("place_address", 2, place_address),
-    ("per_city", 2, per_city),
+    ("per_city", 4, per_city),
     ("in_which", 3, in_which),
 ];
 
@@ -438,6 +443,62 @@ fn count_place(g: &mut Gen) -> Option<Item> {
             let n = int(o.first()?)?;
             Some(says(lang, format!("There are {n} {p} in {place}."), format!("In {place} gibt es {n} {p}.")))
         }),
+    ))
+}
+
+/// "Which parks are in Bremen?": the elements themselves (a map), never a question back or a
+/// count.
+fn which_place(g: &mut Gen) -> Option<Item> {
+    let t = g.thing();
+    let place = g.place()?;
+    let lang = g.lang();
+    let p = pl(t, lang);
+    let q = g.phrase(
+        lang,
+        &["Which {pl} are in {P}?", "Which {pl} are there in {P}?", "What {pl} are there in {P}?", "{pl} in {P}?", "Are there {pl} in {P}?", "which {pl} does {P} have"],
+        &["Welche {pl} gibt es in {P}?", "Welche {pl} liegen in {P}?", "Was für {pl} gibt es in {P}?", "{pl} in {P}?", "Gibt es {pl} in {P}?", "welche {pl} hat {P}"],
+        &[("pl", p), ("P", &place)],
+    );
+    let mut it = Item::query(
+        "which_place",
+        lang,
+        q,
+        format!("{} within {}", t.sel(), region(&place)),
+        Box::new(move |o, _| {
+            let n = n_set(o.first()?)?;
+            Some(match n {
+                0 => says(lang, format!("There are no {p} in {place}."), format!("In {place} gibt es keine {p}.")),
+                _ => says(lang, format!("The map shows {n} {p} in {place}."), format!("Die Karte zeigt {n} {p} in {place}.")),
+            })
+        }),
+    );
+    // "none there" is an answer too
+    it.zero_ok = g.rng.chance(0.2);
+    Some(it)
+}
+
+/// "How has the number of parks changed over the years?": one value per year over the whole
+/// time of the data (a line).
+fn over_the_years(g: &mut Gen) -> Option<Item> {
+    let t = g.thing();
+    let (first, last) = (g.ctx.first_year.max(2007) + 1, g.ctx.last_year);
+    let lang = g.lang();
+    let place = if g.rng.chance(0.5) { Some(g.place()?) } else { None };
+    let p = pl(t, lang);
+    let in_p = place.as_ref().map(|x| format!(" in {x}")).unwrap_or_default();
+    let q = g.phrase(
+        lang,
+        &["How has the number of {pl}{in} changed over the years?", "How many {pl} were there{in} over the years?", "{pl}{in} over time", "Show the number of {pl}{in} year by year."],
+        &["Wie hat sich die Zahl der {pl}{in} über die Jahre entwickelt?", "Wie viele {pl} gab es{in} im Laufe der Jahre?", "{pl}{in} im Zeitverlauf", "Zeige die Zahl der {pl}{in} Jahr für Jahr."],
+        &[("pl", p), ("in", &in_p)],
+    );
+    let within = place.as_ref().map(|x| format!(" within {}", region(x))).unwrap_or_default();
+    Some(Item::query(
+        "over_the_years",
+        lang,
+        q,
+        format!("count of {}{within} on each year from {first} to {last}", t.sel()),
+        Box::new(move |o, _| series_answer(lang, p, o.first()?, place.as_deref())),
     ))
 }
 
@@ -573,7 +634,8 @@ fn per_district(g: &mut Gen) -> Option<Item> {
             lang,
             &["How many {pl} are there per {d}?", "Number of {pl} in each {d}", "{pl} by {d}"],
             &["Wie viele {pl} gibt es pro {d}?", "Anzahl der {pl} je {d}", "{pl} nach {ds}"],
-            &[("pl", p), ("d", d), ("ds", ds)],
+            // after "nach" the dative: Stadtteilen, Bezirken
+            &[("pl", p), ("d", d), ("ds", &if lang == Lang::De && !ds.ends_with('n') { format!("{ds}n") } else { ds.to_string() })],
         )
     };
     let city = conf.city;
@@ -582,7 +644,8 @@ fn per_district(g: &mut Gen) -> Option<Item> {
         "per_district",
         lang,
         q,
-        format!("count of {}{within} per (areas d with d:boundary=administrative and d:admin_level='{}')", t.sel(), conf.district_level),
+        // the districts by name (admin level 10: x.suburb, 9: x.district), as the chart shows them
+        format!("count of {}{within} per {}.{}", t.sel(), t.var(), if conf.district_level == "10" { "suburb" } else { "district" }),
         Box::new(move |o, results| {
             let top = top_groups(o.first()?, results, 3)?;
             let parts: Vec<String> = top.iter().map(|(k, c)| format!("{k} ({c})")).collect();
@@ -1628,7 +1691,12 @@ fn per_city(g: &mut Gen) -> Option<Item> {
     let (field, q) = if g.rng.chance(0.5) {
         ("city", g.phrase(lang, &["How many {pl} are there in each town?", "{pl} per town"], &["Wie viele {pl} gibt es in jedem Ort?", "{pl} pro Ort"], &[("pl", p)]))
     } else {
-        ("suburb", g.phrase(lang, &["How many {pl} are there in each part of town?", "{pl} per part of town"], &["Wie viele {pl} gibt es in jedem Ortsteil?", "{pl} pro Ortsteil"], &[("pl", p)]))
+        ("suburb", g.phrase(
+            lang,
+            &["How many {pl} are there in each part of town?", "{pl} per part of town", "How many {pl} are there in each part of {C}?", "In which parts of {C} are there the most {pl}?"],
+            &["Wie viele {pl} gibt es in jedem Ortsteil?", "{pl} pro Ortsteil", "Wie viele {pl} gibt es in den Stadtteilen von {C}?", "In welchen Stadtteilen von {C} gibt es die meisten {pl}?"],
+            &[("pl", p), ("C", g.ctx.conf.city)],
+        ))
     };
     let v = t.var();
     let city = g.ctx.conf.city;
@@ -1671,4 +1739,143 @@ fn in_which(g: &mut Gen) -> Option<Item> {
             (v != "none").then(|| says(lang, format!("{}: {v}.", capital(&name)), format!("{}: {v}.", capital(&name))))
         }),
     ))
+}
+
+// ── comparisons: two results (two numbers, or two sets in two colours on the map) ──
+
+/// The state at the start of a year, or the current one for the last year of the data.
+fn at_year(y: i32, last: i32) -> String {
+    if y >= last { String::new() } else { format!(" on {y}-01-01") }
+}
+
+/// "Compare the benches in 2010 and 2026": the state in both years.
+fn compare_years(g: &mut Gen) -> Option<Item> {
+    let t = g.thing();
+    let last = g.ctx.last_year;
+    let y1 = g.year().min(last - 4);
+    let y2 = if g.rng.chance(0.6) { last } else { (y1 + 3 + g.rng.below((last - y1 - 2).max(1) as usize) as i32).min(last) };
+    let place = g.place()?;
+    let lang = g.lang();
+    let p = pl(t, lang);
+    let (a, b) = (y1.to_string(), y2.to_string());
+    let numbers = g.rng.chance(0.5);
+    let q = if numbers {
+        g.phrase(
+            lang,
+            &["Please compare the number of {pl} in {P} in {A} and {B}.", "Compare the number of {pl} in {P}: {A} vs. {B}", "How many {pl} were there in {P} in {A} compared to {B}?"],
+            &["Vergleiche bitte die Zahl der {pl} in {P} {A} und {B}.", "Vergleich der Anzahl der {pl} in {P}: {A} und {B}", "Wie viele {pl} gab es in {P} {A} im Vergleich zu {B}?"],
+            &[("pl", p), ("P", &place), ("A", &a), ("B", &b)],
+        )
+    } else {
+        g.phrase(
+            lang,
+            &["Please compare the {pl} in {P} in {A} and {B}.", "Compare the {pl} of {P} in {A} with those in {B}.", "{pl} in {P}: {A} compared to {B}"],
+            &["Vergleiche bitte die {pl} in {P} {A} und {B}.", "Vergleiche die {pl} in {P} von {A} mit denen von {B}.", "{pl} in {P}: {A} im Vergleich zu {B}"],
+            &[("pl", p), ("P", &place), ("A", &a), ("B", &b)],
+        )
+    };
+    let (sel, r) = (t.sel(), region(&place));
+    let query = if numbers {
+        format!("count of {sel} within {r}{}, count of {sel} within {r}{}", at_year(y1, last), at_year(y2, last))
+    } else {
+        format!("{sel} within {r}{}, {sel} within {r}{}", at_year(y1, last), at_year(y2, last))
+    };
+    let mut it = Item::query(
+        "compare_years",
+        lang,
+        q,
+        query,
+        Box::new(move |o, _| {
+            let (n1, n2) = if numbers { (int(o.first()?)? as usize, int(o.get(1)?)? as usize) } else { (n_set(o.first()?)?, n_set(o.get(1)?)?) };
+            let trend = |en: bool| match n2.cmp(&n1) {
+                std::cmp::Ordering::Greater => if en { "more" } else { "mehr" },
+                std::cmp::Ordering::Less => if en { "fewer" } else { "weniger" },
+                std::cmp::Ordering::Equal => if en { "as many" } else { "gleich viele" },
+            };
+            Some(if numbers {
+                says(lang, format!("In {place} there were {n1} {p} in {y1} and {n2} in {y2}: {} than before.", trend(true)), format!("Im Jahr {y1} gab es in {place} {n1} {p}, im Jahr {y2} {n2}: {} als vorher.", trend(false)))
+            } else {
+                says(lang, format!("The map shows the {n1} {p} of {y1} and the {n2} of {y2} in {place}."), format!("Die Karte zeigt die {n1} {p} von {y1} und die {n2} von {y2} in {place}."))
+            })
+        }),
+    );
+    it.zero_ok = true;
+    Some(it)
+}
+
+/// "Compare the cafés with the restaurants in Mitte": both, as numbers or on the map.
+fn compare_things(g: &mut Gen) -> Option<Item> {
+    let a = g.thing();
+    let b = g.thing();
+    if a.cond == b.cond {
+        return None;
+    }
+    let place = g.place()?;
+    let lang = g.lang();
+    let (pa, pb) = (pl(a, lang), pl(b, lang));
+    let numbers = g.rng.chance(0.5);
+    let q = if numbers {
+        g.phrase(
+            lang,
+            &["Compare the number of {A} with the number of {B} in {P}.", "Compare how many {A} and {B} there are in {P}.", "number of {A} compared to {B} in {P}"],
+            &["Vergleiche die Zahl der {A} mit der Zahl der {B} in {P}.", "Vergleiche, wie viele {A} und {B} es in {P} gibt.", "Anzahl der {A} im Vergleich zu {B} in {P}"],
+            &[("A", pa), ("B", pb), ("P", &place)],
+        )
+    } else {
+        g.phrase(
+            lang,
+            &["Compare {A} with {B} in {P}.", "Compare {A} to {B} in {P}.", "{A} and {B} in {P} compared"],
+            &["Vergleiche {A} mit {B} in {P}.", "Vergleiche {A} und {B} in {P}.", "{A} und {B} in {P} im Vergleich"],
+            &[("A", pa), ("B", pb), ("P", &place)],
+        )
+    };
+    let r = region(&place);
+    let query = if numbers { format!("count of {} within {r}, count of {} within {r}", a.sel(), b.sel()) } else { format!("{} within {r}, {} within {r}", a.sel(), b.sel()) };
+    let mut it = Item::query(
+        "compare_things",
+        lang,
+        q,
+        query,
+        Box::new(move |o, _| {
+            let (x, y) = if numbers { (int(o.first()?)? as usize, int(o.get(1)?)? as usize) } else { (n_set(o.first()?)?, n_set(o.get(1)?)?) };
+            Some(if numbers {
+                says(lang, format!("In {place} there are {x} {pa} and {y} {pb}."), format!("In {place} gibt es {x} {pa} und {y} {pb}."))
+            } else {
+                says(lang, format!("The map shows {x} {pa} and {y} {pb} in {place}."), format!("Die Karte zeigt {x} {pa} und {y} {pb} in {place}."))
+            })
+        }),
+    );
+    it.zero_ok = true;
+    Some(it)
+}
+
+/// "Compare the playgrounds in Vegesack with those in Findorff": both on the map.
+fn compare_places_map(g: &mut Gen) -> Option<Item> {
+    let t = g.thing();
+    let a = g.place()?;
+    let b = g.place()?;
+    if a == b {
+        return None;
+    }
+    let lang = g.lang();
+    let p = pl(t, lang);
+    let q = g.phrase(
+        lang,
+        &["Compare the {pl} in {A} with those in {B}.", "Compare the {pl} of {A} to those of {B}.", "{pl}: {A} compared to {B}"],
+        &["Vergleiche die {pl} in {A} mit denen in {B}.", "Vergleiche die {pl} von {A} und {B}.", "{pl}: {A} im Vergleich zu {B}"],
+        &[("pl", p), ("A", &a), ("B", &b)],
+    );
+    let s = t.sel();
+    let mut it = Item::query(
+        "compare_places_map",
+        lang,
+        q,
+        format!("{s} within {}, {s} within {}", region(&a), region(&b)),
+        Box::new(move |o, _| {
+            let (x, y) = (n_set(o.first()?)?, n_set(o.get(1)?)?);
+            Some(says(lang, format!("The map shows {x} {p} in {a} and {y} in {b}."), format!("Die Karte zeigt {x} {p} in {a} und {y} in {b}.")))
+        }),
+    );
+    it.zero_ok = true;
+    Some(it)
 }

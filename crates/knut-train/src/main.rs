@@ -533,6 +533,28 @@ fn refs(args: &[String]) -> Result<(), String> {
     if bad > 0 { Err(format!("{bad} references failed or found nothing")) } else { Ok(()) }
 }
 
+/// How the text interface shows results (as app.js decides): `series` (a line over time),
+/// `bars` (values per category), `map` (elements), `number`, or `text`.
+fn view_kind(outputs: &[knut_exec::CollectedOutput]) -> &'static str {
+    const TIME: &[&str] = &["year", "month", "week", "day"];
+    for o in outputs {
+        let Some(rows) = o.value.as_array() else { continue };
+        if rows.len() < 2 || !rows.iter().all(|r| r.is_object()) || rows.iter().any(|r| r.get("tags").is_some() || r.get("geometry").is_some()) {
+            continue;
+        }
+        let keys: Vec<&String> = rows[0].as_object().map(|m| m.keys().collect()).unwrap_or_default();
+        let num = keys.iter().any(|k| !["lon", "lat", "id", "version"].contains(&k.as_str()) && rows.iter().all(|r| r[k.as_str()].is_number() || r[k.as_str()]["value"].is_number()));
+        if !num {
+            continue;
+        }
+        return if keys.iter().any(|k| TIME.contains(&k.as_str())) { "series" } else { "bars" };
+    }
+    if outputs.iter().any(|o| o.features > 0) {
+        return "map";
+    }
+    if outputs.iter().any(|o| o.value.is_number() || o.value["value"].is_number()) { "number" } else { "text" }
+}
+
 /// Two results agree: numbers up to rounding, everything else exactly.
 fn same(a: &J, b: &J) -> bool {
     match (a, b) {
@@ -569,8 +591,8 @@ fn eval(args: &[String]) -> Result<(), String> {
         Some(p) => Some(std::io::BufWriter::new(std::fs::File::create(p).map_err(|e| e.to_string())?)),
         None => None,
     };
-    // per template: (cases, correct, valid queries, seconds)
-    let mut score = std::collections::BTreeMap::<String, (usize, usize, usize, f64)>::new();
+    // per template: (cases, correct, valid queries, right kind of view, seconds)
+    let mut score = std::collections::BTreeMap::<String, (usize, usize, usize, usize, f64)>::new();
     for (i, c) in cases.iter().enumerate() {
         let path = c.db.clone().or_else(|| default_db.map(PathBuf::from)).ok_or("a case without database: give --db")?;
         let path = std::fs::canonicalize(&path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -587,34 +609,38 @@ fn eval(args: &[String]) -> Result<(), String> {
         };
         let outcome = chat::solve(&model, &system, &c.turns, &|q| d.check(q), &run, &|_| {});
         let seconds = started.elapsed().as_secs_f64();
-        let (ok, valid, note, got) = match outcome {
-            Err(e) => (false, false, format!("model error: {e}"), None),
-            Ok(chat::Outcome::Ask(a)) => (c.expect_ask, false, format!("asked: {a}"), None),
-            Ok(_) if c.expect_ask => (false, false, "did not ask".into(), None),
-            Ok(chat::Outcome::Invalid { query, .. }) => (false, false, "invalid after the corrections".into(), query),
-            Ok(chat::Outcome::Failed { query, error }) => (false, true, format!("run failed: {}", error.lines().next().unwrap_or("")), Some(query)),
+        let (ok, valid, kind_ok, note, got) = match outcome {
+            Err(e) => (false, false, false, format!("model error: {e}"), None),
+            Ok(chat::Outcome::Ask(a)) => (c.expect_ask, false, c.expect_ask, format!("asked: {a}"), None),
+            Ok(_) if c.expect_ask => (false, false, false, "did not ask".into(), None),
+            Ok(chat::Outcome::Invalid { query, .. }) => (false, false, false, "invalid after the corrections".into(), query),
+            Ok(chat::Outcome::Failed { query, error }) => (false, true, false, format!("run failed: {}", error.lines().next().unwrap_or("")), Some(query)),
             Ok(chat::Outcome::Ran { query, result: got }) => {
                 let want = d.run(c.reference.as_deref().unwrap_or(""), 60);
                 // every result of the reference must be among the results of the model
                 let ok = !want.outputs.is_empty() && want.outputs.iter().all(|w| got.outputs.iter().any(|g| same(&g.value, &w.value)));
-                (ok, true, if ok { "same results".into() } else { "other results".into() }, Some(query))
+                let (kg, kw) = (view_kind(&got.outputs), view_kind(&want.outputs));
+                let note = if ok { "same results".to_string() } else if kg == kw { format!("other results ({kg})") } else { format!("other results, {kg} instead of {kw}") };
+                (ok, true, kg == kw, note, Some(query))
             }
         };
         let e = score.entry(c.template.clone()).or_default();
         e.0 += 1;
         e.1 += ok as usize;
         e.2 += valid as usize;
-        e.3 += seconds;
+        e.3 += kind_ok as usize;
+        e.4 += seconds;
         eprintln!("[{}/{}] {} {:.1} s  {}  ({note})", i + 1, cases.len(), if ok { "✓" } else { "✗" }, seconds, question.replace('\n', " "));
         if let Some(f) = out.as_mut() {
-            let row = json!({ "template": c.template, "turns": c.turns, "reference": c.reference, "expect_ask": c.expect_ask, "query": got, "ok": ok, "valid": valid, "note": note, "seconds": seconds });
+            let row = json!({ "template": c.template, "turns": c.turns, "reference": c.reference, "expect_ask": c.expect_ask, "query": got, "ok": ok, "valid": valid, "view_ok": kind_ok, "note": note, "seconds": seconds });
             writeln!(f, "{row}").map_err(|e| e.to_string())?;
         }
     }
-    let total = score.values().fold((0, 0, 0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3));
-    println!("{:<22} {:>6} {:>8} {:>8} {:>8}", "template", "cases", "correct", "valid", "s/case");
-    for (t, (n, ok, valid, s)) in score.iter().chain(std::iter::once((&"all".to_string(), &total))) {
-        println!("{t:<22} {n:>6} {:>7.0}% {:>7.0}% {:>8.1}", 100.0 * *ok as f64 / *n as f64, 100.0 * *valid as f64 / *n as f64, s / *n as f64);
+    let total = score.values().fold((0, 0, 0, 0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1, a.2 + b.2, a.3 + b.3, a.4 + b.4));
+    println!("{:<22} {:>6} {:>8} {:>8} {:>8} {:>8}", "template", "cases", "correct", "valid", "view", "s/case");
+    for (t, (n, ok, valid, view, s)) in score.iter().chain(std::iter::once((&"all".to_string(), &total))) {
+        let pct = |x: usize| 100.0 * x as f64 / *n as f64;
+        println!("{t:<22} {n:>6} {:>7.0}% {:>7.0}% {:>7.0}% {:>8.1}", pct(*ok), pct(*valid), pct(*view), s / *n as f64);
     }
     Ok(())
 }

@@ -19,7 +19,7 @@
 {"question": "How long does it take from Bremen Hauptbahnhof to the nearest pharmacy?", "ask": true}
 {"question": "Wie viele Bäume stehen in der Östlichen Vorstadt?", "reference": "count of nodes n with n:natural=tree within 'Östliche Vorstadt'"}
 {"question": "Wie viele Briefkästen gibt es in Horn-Lehe?", "reference": "count of nodes n with n:amenity=post_box within 'Horn-Lehe'"}
-{"question": "How many schools are there in each district of Bremen?", "reference": "count of * x with x:amenity=school within Bremen per (areas d with d:boundary=administrative and d:admin_level='10')"}
+{"question": "How many schools are there in each district of Bremen?", "reference": "count of * x with x:amenity=school within Bremen per x.suburb"}
 {"question": "Wie viele Gebäude haben mehr als 5 Stockwerke?", "reference": "count of areas a with a:building and (a:building:levels ?? 0) > 5"}
 {"question": "How many ice cream parlours can I reach within 15 minutes by bike from Bremen Hauptbahnhof?", "reference": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nreach = isochrone I from s closer than 15 min by bicycle\ncount of * x with x:amenity=ice_cream within reach"}
 {"question": "Welcher Anteil der Bänke hat eine Rückenlehne?", "reference": "share of (nodes n with n:amenity=bench) with n:backrest=yes"}
@@ -49,3 +49,5 @@
 {"question": "How many benches are within 300 m of 8.8079E, 53.0758N?", "reference": "count of nodes n with n:amenity=bench and n near some _ in [8.8079E, 53.0758N] closer than 300 m"}
 {"question": "Wie weit ist es mit dem Fahrrad von Am Wall 201, Bremen zur nächsten Apotheke?", "reference": "a = geocoded 'Am Wall 201, Bremen'\ndest = nearest of (* x with x:amenity=pharmacy) to a\np = path P from a to dest by bicycle\np.length"}
 {"question": "Wie viele Kneipen gibt es in jedem Ort?", "reference": "count of * x with x:amenity=pub per x.city"}
+{"question": "Please compare the number of benches in Vegesack in 2015 and 2026.", "reference": "count of nodes n with n:amenity=bench within Vegesack on 2015-01-01, count of nodes n with n:amenity=bench within Vegesack"}
+{"question": "Vergleiche die Cafés mit den Restaurants in Findorff.", "reference": "* x with x:amenity=cafe within Findorff, * x with x:amenity=restaurant within Findorff"}
