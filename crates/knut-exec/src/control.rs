@@ -47,7 +47,7 @@ impl Control {
     }
 
     /// Output `step` (0-based) of `steps` starts.
-    pub(crate) fn begin_step(&self, step: usize, steps: usize, label: &str) {
+    pub fn begin_step(&self, step: usize, steps: usize, label: &str) {
         self.done.store(0, Ordering::Relaxed);
         self.total.store(0, Ordering::Relaxed);
         self.steps.store(steps, Ordering::Relaxed);

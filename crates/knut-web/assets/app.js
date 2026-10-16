@@ -318,8 +318,129 @@ const MapView = {
 
 // ----- application ----------------------------------------------------------------------
 
+// ----- simple page: questions in plain language ---------------------------------------
+// A search field; a question goes to the language model, which writes a query (checked and
+// corrected on the server), runs it and answers; or asks back. Each turn can be opened in
+// the editor of the advanced page, with its results on the map.
+const ChatView = {
+  props: { info: Object, db: String },
+  emits: ["advanced", "open"],
+  setup(props, { emit }) {
+    const turns = ref(load("chat", []));
+    const text = ref("");
+    const busy = ref(false);
+    const label = ref("");
+    const input = ref(null);
+    let job = null;
+    let timer = null;
+    watch(turns, v => store("chat", v.map(t => ({ ...t, outputs: undefined }))), { deep: true });
+
+    function history() {
+      const m = [];
+      for (const t of turns.value) {
+        m.push({ role: "user", content: t.question });
+        const reply = t.answer || t.ask;
+        if (reply) m.push({ role: "assistant", content: reply });
+      }
+      return m;
+    }
+    async function ask() {
+      const q = text.value.trim();
+      if (!q || busy.value) return;
+      turns.value.push({ question: q });
+      text.value = "";
+      busy.value = true;
+      label.value = "understanding the question";
+      nextTick(scrollDown);
+      try {
+        const r = await fetch("api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: history(), db: props.db }) });
+        const j = await r.json();
+        if (!j.job) throw new Error(j.error || "the server did not start");
+        job = j.job;
+        poll();
+      } catch (e) {
+        done({ error: e.message });
+      }
+    }
+    async function poll() {
+      try {
+        const j = await (await fetch("api/job/" + job)).json();
+        if (j.state === "running") {
+          label.value = (j.progress && j.progress.label) || label.value;
+          timer = setTimeout(poll, POLL_MS);
+          return;
+        }
+        const c = j.chat || {};
+        const outputs = (j.result && j.result.outputs) || [];
+        done({ ...c, cancelled: j.state === "cancelled", outputs, mapped: outputs.some(o => o.geojson), seconds: j.seconds });
+      } catch (e) {
+        done({ error: "Lost the connection to knut web: " + e.message });
+      }
+    }
+    function done(fields) {
+      clearTimeout(timer);
+      Object.assign(turns.value[turns.value.length - 1], fields);
+      busy.value = false;
+      job = null;
+      nextTick(() => { scrollDown(); input.value && input.value.focus(); });
+    }
+    async function cancel() {
+      if (job) await fetch("api/job/" + job + "/cancel", { method: "POST" }).catch(() => {});
+    }
+    function clear() {
+      if (busy.value) return;
+      turns.value = [];
+      nextTick(() => input.value && input.value.focus());
+    }
+    function scrollDown() {
+      const el = document.querySelector(".chat .turns");
+      if (el) el.scrollTop = el.scrollHeight;
+    }
+    function key(e) {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); }
+      else if (e.key === "Escape" && busy.value) cancel();
+    }
+    onMounted(() => nextTick(() => { scrollDown(); input.value && input.value.focus(); }));
+    return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds };
+  },
+  template: `
+    <div :class="['chat', { start: !turns.length }]">
+      <div class="chat-top">
+        <button v-if="turns.length" class="small" :disabled="busy" title="Start a new conversation" @click="clear">New</button>
+        <button class="small" title="The query editor with the map" @click="emit('advanced')">Advanced</button>
+      </div>
+      <div class="turns">
+        <img v-if="!turns.length" class="chat-logo" src="knut.svg" alt="knut">
+        <div v-for="(t, i) in turns" :key="i" class="turn">
+          <div class="question">{{ t.question }}</div>
+          <div class="reply">
+            <p v-if="t.ask" class="answer">{{ t.ask }}</p>
+            <p v-else-if="t.answer" class="answer">{{ t.answer }}</p>
+            <p v-else-if="t.cancelled" class="note">Cancelled.</p>
+            <p v-else-if="t.error" class="note bad">{{ t.error }}</p>
+            <p v-else-if="busy && i === turns.length - 1" class="note busy">{{ label }} …</p>
+            <details v-if="t.query" class="query">
+              <summary>Query<span v-if="t.seconds"> · {{ fmtSeconds(t.seconds) }}</span></summary>
+              <pre>{{ t.query }}</pre>
+              <ul v-if="t.problems && t.problems.length" class="problems"><li v-for="(p, k) in t.problems" :key="k"><pre>{{ p }}</pre></li></ul>
+            </details>
+            <div v-if="t.query && !(busy && i === turns.length - 1)" class="turn-tools">
+              <button class="small" @click="emit('open', t)">{{ t.mapped ? 'Show on the map' : 'Open in the editor' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="chat-input">
+        <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask further…' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
+          @keydown="key" :disabled="busy && false"></textarea>
+        <button v-if="!busy" class="primary" :disabled="!text.trim()" title="Ask (Enter)" @click="ask">Ask</button>
+        <button v-else class="danger" title="Cancel (Esc)" @click="cancel">Cancel</button>
+      </div>
+    </div>`,
+};
+
 const App = {
-  components: { Panel, MapView },
+  components: { Panel, MapView, ChatView },
   setup() {
     const map = ref(null);
     const editorHost = ref(null);
@@ -343,7 +464,11 @@ const App = {
       examples: [],
       filter: "",
       docs: "",
+      // "simple" (questions in plain language, if the server has a language model) or "advanced"
+      mode: load("mode", "simple"),
     });
+    watch(() => state.mode, v => store("mode", v));
+    const simple = computed(() => !!(state.info && state.info.chat) && state.mode === "simple");
     watch(() => state.query, v => store("query", v));
     watch(() => state.db, v => store("db", v));
 
@@ -506,6 +631,24 @@ const App = {
       if (!q) return state.examples;
       return state.examples.filter(e => (e.title + " " + e.description + " " + e.code + " " + e.category).toLowerCase().includes(q));
     });
+    // a turn of the simple page in the editor, its results on the map
+    function openTurn(t) {
+      state.mode = "advanced";
+      state.tab = "query";
+      nextTick(() => {
+        if (editor) editor.setValue(t.query);
+        state.query = t.query;
+        if (t.outputs && t.outputs.length) {
+          state.results = t.outputs;
+          state.visible = t.outputs.map(() => true);
+          map.value.show(t.outputs);
+          nudge(".panel.right");
+        } else {
+          run();
+        }
+      });
+    }
+
     function useExample(e, andRun) {
       state.tab = "query";
       nextTick(() => {
@@ -534,7 +677,7 @@ const App = {
     return {
       state, map, editorHost, goToLine, messageLines,
       run, cancel, reset, progressPct, progressLabel, progressRight, filtered, useExample,
-      summary, toggleLayer, zoomTo, saveJson, saveGeojson, copyText, COLORS, fmtSeconds, theme,
+      summary, toggleLayer, zoomTo, saveJson, saveGeojson, copyText, COLORS, fmtSeconds, theme, simple, openTurn,
       themes: [
         { id: "light", label: "Light", title: "Light colours", icon: ICONS.sun },
         { id: "dark", label: "Dark", title: "Dark colours", icon: ICONS.moon },
@@ -543,6 +686,7 @@ const App = {
     };
   },
   template: `
+    <ChatView v-if="simple" :info="state.info" :db="state.db" @advanced="state.mode = 'advanced'" @open="openTurn" />
     <MapView ref="map" :info="state.info" />
 
     <Panel side="left" label="the query panel">
@@ -550,6 +694,7 @@ const App = {
         <nav class="tabs" role="tablist">
           <button v-for="t in ['query', 'examples', 'docs', 'settings', 'about']" :key="t" role="tab"
             :class="{ active: state.tab === t }" @click="state.tab = t">{{ t[0].toUpperCase() + t.slice(1) }}</button>
+          <button v-if="state.info && state.info.chat" class="to-simple" title="Questions in plain language" @click="state.mode = 'simple'">Simple</button>
         </nav>
       </template>
 

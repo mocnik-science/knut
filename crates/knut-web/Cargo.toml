@@ -16,6 +16,8 @@ knut-plan.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tiny_http = "0.12"
+# client for a language model server (`--llm`); plain HTTP, as such servers run locally
+ureq = { version = "3", default-features = false }
 
 [dev-dependencies]
 knut-builder.workspace = true

@@ -1,0 +1,31 @@
+[package]
+name = "knut-llm"
+description = "Local language model for the simple page of knut web (questions in plain language)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories = ["science::geo"]
+# not on crates.io while candle depends on yanked versions of `zip` (see vendor/candle-core)
+publish = false
+
+[[bin]]
+name = "knut-llm"
+path = "src/main.rs"
+
+[dependencies]
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+tokenizers = { version = "0.22", default-features = false, features = ["fancy-regex"] }
+serde_json.workspace = true
+tiny_http = "0.12"
+# downloads the model from Hugging Face (https)
+ureq = "3"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+candle-core = { version = "0.11", features = ["metal"] }
+candle-nn = { version = "0.11", features = ["metal"] }
+candle-transformers = { version = "0.11", features = ["metal"] }

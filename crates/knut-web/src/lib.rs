@@ -10,8 +10,11 @@
 //! | `GET /api/info` | default database, its extent and time range, map style |
 //! | `POST /api/check` `{script, db?}` | `{problems}`: parse and check only, while typing |
 //! | `POST /api/run` `{script, db?}` | `{job}` |
-//! | `GET /api/job/ID` | `{state: running, progress}` or `{state: done, result}` |
+//! | `POST /api/chat` `{messages, db?}` | `{job}`: a question in plain language (with `--llm`) |
+//! | `GET /api/job/ID` | `{state: running, progress}` or `{state: done, result, chat?}` |
 //! | `POST /api/job/ID/cancel` | `{}` |
+
+pub mod chat;
 
 use knut_exec::control::Control;
 use knut_exec::db::Db;
@@ -54,6 +57,11 @@ pub struct WebOptions {
     pub open: bool,
     /// URL of a MapLibre style; default: OpenStreetMap raster tiles.
     pub style: Option<String>,
+    /// Server of a language model (OpenAI-compatible API) for questions in plain language;
+    /// without one the page offers only the query editor.
+    pub llm: Option<String>,
+    /// Model name sent to that server.
+    pub llm_model: Option<String>,
 }
 
 /// The examples shown in the page: `[{title, description, code}]`.
@@ -73,6 +81,8 @@ struct Job {
     control: Arc<Control>,
     started: Instant,
     result: Mutex<Option<(Collected, f64)>>,
+    /// Chat jobs: the question back, the query, the answer or what went wrong.
+    chat: Mutex<Option<J>>,
 }
 
 struct State {
@@ -82,6 +92,7 @@ struct State {
     dbs: Mutex<HashMap<PathBuf, Arc<Db>>>,
     jobs: Mutex<HashMap<u64, Arc<Job>>>,
     next: AtomicU64,
+    model: Option<Arc<dyn chat::Model>>,
 }
 
 impl State {
@@ -125,6 +136,20 @@ pub fn serve(opts: WebOptions) -> Result<(), String> {
     if opts.open {
         open_browser(&url);
     }
+    // the language model: a server given with --llm, else the local `knut-llm` if installed
+    let mut local_llm = None;
+    let llm = match opts.llm {
+        Some(u) => Some(u),
+        None => match start_local_llm() {
+            Some((child, url)) => {
+                eprintln!("language model: knut-llm (local; loads in the background, the first time it downloads about 1.8 GB)");
+                local_llm = Some(child);
+                Some(url)
+            }
+            None => None,
+        },
+    };
+    let _local_llm = local_llm.map(KillOnDrop);
     let state = Arc::new(State {
         default_db: opts.db,
         base_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -132,6 +157,7 @@ pub fn serve(opts: WebOptions) -> Result<(), String> {
         dbs: Mutex::new(HashMap::new()),
         jobs: Mutex::new(HashMap::new()),
         next: AtomicU64::new(1),
+        model: llm.map(|url| Arc::new(chat::HttpModel { url, model: opts.llm_model.unwrap_or_else(|| "qwen3:1.7b".into()) }) as Arc<dyn chat::Model>),
     });
     // open the default database now, so that the first run is fast
     if let Some(d) = &state.default_db {
@@ -142,6 +168,31 @@ pub fn serve(opts: WebOptions) -> Result<(), String> {
         std::thread::spawn(move || handle(&st, req));
     }
     Ok(())
+}
+
+/// Starts `knut-llm serve` (next to this program or on the PATH) on a free local port.
+fn start_local_llm() -> Option<(std::process::Child, String)> {
+    let name = if cfg!(windows) { "knut-llm.exe" } else { "knut-llm" };
+    let beside = std::env::current_exe().ok().map(|e| e.with_file_name(name)).filter(|p| p.is_file());
+    let exe = beside.or_else(|| std::env::var_os("PATH").and_then(|ps| std::env::split_paths(&ps).map(|d| d.join(name)).find(|p| p.is_file())))?;
+    let port = std::net::TcpListener::bind("127.0.0.1:0").ok()?.local_addr().ok()?.port();
+    let child = std::process::Command::new(exe)
+        .args(["serve", "--port", &port.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    Some((child, format!("http://127.0.0.1:{port}")))
+}
+
+/// Ends the local language model with the server.
+struct KillOnDrop(std::process::Child);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 fn open_browser(url: &str) {
@@ -204,6 +255,27 @@ fn handle(st: &State, mut req: Request) {
                 Err(e) => send_json(req, 400, &json!({ "error": e.to_string() })),
             }
         }
+        (Method::Post, "/api/chat") => {
+            let mut body = String::new();
+            let _ = req.as_reader().take(1 << 20).read_to_string(&mut body);
+            let v: J = serde_json::from_str(&body).unwrap_or(J::Null);
+            let history: Vec<(String, String)> = v["messages"]
+                .as_array()
+                .map(|ms| {
+                    ms.iter()
+                        .filter_map(|m| {
+                            let role = m["role"].as_str().filter(|r| *r == "user" || *r == "assistant")?;
+                            Some((role.to_string(), m["content"].as_str()?.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let typed = v["db"].as_str().map(str::trim).filter(|s| !s.is_empty()).map(PathBuf::from);
+            match start_chat(st, history, typed) {
+                Ok(id) => send_json(req, 200, &json!({ "job": id })),
+                Err(e) => send_json(req, 400, &json!({ "error": e })),
+            }
+        }
         (Method::Post, "/api/check") => {
             let mut body = String::new();
             let _ = req.as_reader().take(16 << 20).read_to_string(&mut body);
@@ -235,7 +307,8 @@ fn handle(st: &State, mut req: Request) {
                                 j.remove(&id);
                             }
                             let state = if result.cancelled { "cancelled" } else { "done" };
-                            send_json(req, 200, &json!({ "state": state, "seconds": secs, "result": result }))
+                            let chat = job.chat.lock().ok().and_then(|mut c| c.take());
+                            send_json(req, 200, &json!({ "state": state, "seconds": secs, "result": result, "chat": chat }))
                         }
                         None => send_json(
                             req,
@@ -262,6 +335,7 @@ fn info(st: &State) -> J {
         }),
         "time": db.as_ref().map(|d| [knut_lang::dates::format_instant(d.earliest), knut_lang::dates::format_instant(d.latest)]),
         "style": st.style,
+        "chat": st.model.is_some(),
     })
 }
 
@@ -282,10 +356,89 @@ fn database_of(st: &State, script: &str, typed: Option<PathBuf>) -> (Option<Path
     (st.default_db.clone(), st.default_db.clone())
 }
 
+/// A question in plain language as a job: the model's query (checked and corrected), its run
+/// and the model's answer; or the model's question back.
+fn start_chat(st: &State, history: Vec<(String, String)>, typed: Option<PathBuf>) -> Result<u64, String> {
+    let model = st.model.clone().ok_or("no language model (start knut web with --llm URL)")?;
+    let question = match history.last() {
+        Some((r, q)) if r == "user" && !q.trim().is_empty() => q.clone(),
+        _ => return Err("the last message must be the question".into()),
+    };
+    let id = st.next.fetch_add(1, Ordering::Relaxed);
+    let control = Control::new();
+    let job = Arc::new(Job { control: control.clone(), started: Instant::now(), result: Mutex::new(None), chat: Mutex::new(None) });
+    if let Ok(mut j) = st.jobs.lock() {
+        j.insert(id, job.clone());
+    }
+    let (db, path) = database_of(st, "", typed);
+    let shared_db = path.as_deref().and_then(|p| st.db(p));
+    let system = chat::system_prompt(&database_description(path.as_deref(), shared_db.as_deref()), &question, &examples());
+    let base = st.base_dir.clone();
+    std::thread::spawn(move || {
+        let step = |label: &str| control.begin_step(0, 1, label);
+        let check = |q: &str| -> Vec<String> {
+            let opts = Options { shared_db: shared_db.clone(), ..Default::default() };
+            knut_exec::quick_check(q, &opts).into_iter().filter(|p| p.severity == "error").map(|p| p.text).collect()
+        };
+        let empty = || Collected { code: 0, messages: String::new(), outputs: Vec::new(), cancelled: false, problems: Vec::new() };
+        let (result, info) = match chat::plan(&*model, &system, &history, &check, &step) {
+            Err(e) => (empty(), json!({ "error": e })),
+            Ok(p) if p.ask.is_some() => (empty(), json!({ "ask": p.ask })),
+            Ok(p) if !p.problems.is_empty() => (empty(), json!({ "query": p.query, "problems": p.problems, "error": "no valid query could be formed for the question" })),
+            Ok(p) => {
+                let query = p.query.unwrap_or_default();
+                if control.is_cancelled() {
+                    (Collected { cancelled: true, ..empty() }, json!({ "query": query }))
+                } else {
+                    step("running the query");
+                    let opts = Options { db, limit: TEXT_ROWS, timing: false, control: Some(control.clone()), shared_db: shared_db.clone(), ..Default::default() };
+                    let result = knut_exec::run_collect(&query, Some("query.knut"), &base, &opts, MAX_FEATURES);
+                    let info = if result.cancelled {
+                        json!({ "query": query })
+                    } else if result.code != 0 && result.outputs.is_empty() {
+                        json!({ "query": query, "error": result.messages })
+                    } else {
+                        control.begin_step(0, 1, "writing the answer");
+                        let outputs: Vec<(String, String)> = result.outputs.iter().map(|o| (o.expr.clone(), o.text.clone())).collect();
+                        match chat::answer(&*model, &question, &query, &chat::results_text(&outputs)) {
+                            Ok(a) => json!({ "query": query, "answer": a }),
+                            Err(e) => json!({ "query": query, "error": e }),
+                        }
+                    };
+                    (result, info)
+                }
+            }
+        };
+        if let Ok(mut c) = job.chat.lock() {
+            *c = Some(info);
+        }
+        if let Ok(mut r) = job.result.lock() {
+            *r = Some((result, job.started.elapsed().as_secs_f64()));
+        }
+    });
+    Ok(id)
+}
+
+/// The database for the model: file, area and time range.
+fn database_description(path: Option<&Path>, db: Option<&Db>) -> String {
+    let Some(db) = db else { return "none (queries must name one with knut_db)".into() };
+    let f = db.focus();
+    let name = path.and_then(|p| p.file_name()).map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    format!(
+        "{name}, area {:.2}–{:.2}° E, {:.2}–{:.2}° N, data from {} to {}. Places are named with `within NAME` (boundaries in the database).",
+        f.minx,
+        f.maxx,
+        f.miny,
+        f.maxy,
+        knut_lang::dates::format_instant(db.earliest),
+        knut_lang::dates::format_instant(db.latest)
+    )
+}
+
 fn start(st: &State, script: String, typed: Option<PathBuf>) -> u64 {
     let id = st.next.fetch_add(1, Ordering::Relaxed);
     let control = Control::new();
-    let job = Arc::new(Job { control: control.clone(), started: Instant::now(), result: Mutex::new(None) });
+    let job = Arc::new(Job { control: control.clone(), started: Instant::now(), result: Mutex::new(None), chat: Mutex::new(None) });
     if let Ok(mut j) = st.jobs.lock() {
         j.insert(id, job.clone());
     }

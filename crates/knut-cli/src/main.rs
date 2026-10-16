@@ -139,6 +139,13 @@ struct WebArgs {
     /// URL of a MapLibre style for the base map (default: OpenStreetMap tiles)
     #[arg(long)]
     style: Option<String>,
+    /// Server of a language model with an OpenAI-compatible API (llama.cpp, Ollama, vLLM),
+    /// e.g. http://localhost:11434: enables the simple page for questions in plain language
+    #[arg(long)]
+    llm: Option<String>,
+    /// Name of the model on that server (default: qwen3:1.7b)
+    #[arg(long)]
+    llm_model: Option<String>,
 }
 
 #[derive(Args)]
@@ -501,7 +508,7 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.cmd {
         Cmd::Run(_) => unreachable!(),
         Cmd::Index { what } => index(what),
-        Cmd::Web(a) => knut_web::serve(knut_web::WebOptions { db: a.db, host: a.host, port: a.port, open: !a.no_open, style: a.style }),
+        Cmd::Web(a) => knut_web::serve(knut_web::WebOptions { db: a.db, host: a.host, port: a.port, open: !a.no_open, style: a.style, llm: a.llm, llm_model: a.llm_model }),
         Cmd::Build(a) => build(a),
         Cmd::Info { file, detailed, users } => info(&file, detailed, users),
         Cmd::Search { file, text, limit } => search(&file, &text, limit),
