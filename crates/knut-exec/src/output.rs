@@ -380,7 +380,8 @@ pub fn json(ctx: &Ctx, v: &Value) -> R<serde_json::Value> {
                 })
                 .collect::<R<Vec<_>>>()?,
         ),
-        Value::Region(r) => J::String(geom::to_wkt(&r.geom())),
+        // an isochrone as its outline, not cell by cell (the same area, a fraction of the size)
+        Value::Region(r) => J::String(geom::to_wkt(&r.display_geom())),
         Value::Path(p) => json!({"length_m": p.length, "duration_s": p.duration, "ways": p.ways, "geometry": geom::to_wkt(&p.geom)}),
         Value::Record(r) => J::Object(r.iter().map(|(k, x)| Ok((k.clone(), json(ctx, x)?))).collect::<R<serde_json::Map<_, _>>>()?),
         Value::Net(n) => json!({"network_edges": n.n_edges()}),

@@ -362,7 +362,7 @@ impl Region {
         }
     }
 
-    /// Geometry for maps: an isochrone as its outline instead of single cells.
+    /// Geometry for maps and output: an isochrone as its outline instead of single cells.
     pub fn display_geom(&self) -> Geom {
         match self {
             Region::Raster(r) => Geom::Poly(r.outline()),

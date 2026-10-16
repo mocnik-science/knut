@@ -152,15 +152,18 @@ pub fn eval(ctx: &Ctx, e: &'static Expr, s: &'static Special, sc: &Sc) -> R<Valu
                 Metric::Time => n.v * sp,
                 Metric::Length => n.v,
             };
-            let mut bb = BBoxF::EMPTY;
-            bb.add(p);
-            let net = spatial::network(ctx, m.mode, m.using.as_deref(), bb.expand_m(radius * 1.05 + 500.0), sc, e.span)?;
             let cell = (radius / 200.0).clamp(25.0, 500.0);
+            // the routing network of the container, if there is one
             if m.using.is_none()
                 && let Some(v) = stored_isochrone(ctx, p, m.mode, metric, n.v, cell)?
             {
                 return Ok(v);
             }
+            // otherwise the network of the ways around the point (only then: reading them
+            // takes longer than the isochrone in the stored network)
+            let mut bb = BBoxF::EMPTY;
+            bb.add(p);
+            let net = spatial::network(ctx, m.mode, m.using.as_deref(), bb.expand_m(radius * 1.05 + 500.0), sc, e.span)?;
             Ok(match net.isochrone(p, m.mode, metric, n.v, cell) {
                 Some(r) => Value::Region(Arc::new(Region::Raster(r))),
                 None => Value::None,
@@ -582,9 +585,13 @@ fn stored_isochrone(ctx: &Ctx, p: crate::geom::P, m: Mode, metric: Metric, limit
     let sources = crate::routing::entries(&net, &s, m, true);
     // a search bounded by the time first (it touches only what is reachable); if that is a
     // large share of the network, a sweep over the hierarchy (PHAST) is faster
-    let dist = crate::routing::reach_bounded(&net, &sources, m, limit, net.n() / 10)
-        .or_else(|| crate::ch::reach(db, &net, &sources, m, limit))
-        .unwrap_or_else(|| crate::routing::reach(&net, &sources, m, limit));
-    let r = crate::routing::isochrone_raster(db, &net, &s, &dist, m, limit, cell);
+    // (a sweep at once if even at the highest speed the area would cover the database)
+    let r_max = limit * net.max_speed(m) / 1000.0;
+    let bounded = std::f64::consts::PI * r_max * r_max < db.extent.area_km2();
+    let (dist, reached) = match bounded.then(|| crate::routing::reach_bounded(&net, &sources, m, limit, net.n() / 10)).flatten() {
+        Some((d, r)) => (d, Some(r)),
+        None => (crate::ch::reach(db, &net, &sources, m, limit).unwrap_or_else(|| crate::routing::reach(&net, &sources, m, limit)), None),
+    };
+    let r = crate::routing::isochrone_raster(db, &net, &s, &dist, reached.as_deref(), m, limit, cell);
     Ok(Some(Value::Region(Arc::new(Region::Raster(r)))))
 }

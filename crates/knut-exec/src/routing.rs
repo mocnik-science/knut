@@ -436,6 +436,24 @@ pub struct Snap {
 
 /// The nearest way usable by the mode, found by a scan of the ways around the point.
 pub fn snap(db: &Db, net: &RoutingNet, p: P, m: Mode) -> Option<Snap> {
+    // the same point is often attached again (several isochrones or routes from it)
+    type Key = (std::path::PathBuf, usize, u64, u64, usize);
+    static CACHE: std::sync::Mutex<Vec<(Key, Option<Snap>)>> = std::sync::Mutex::new(Vec::new());
+    let key: Key = (db.path.clone(), net.n(), p.0.to_bits(), p.1.to_bits(), mode_idx(m));
+    if let Some(x) = CACHE.lock().ok().and_then(|c| c.iter().find(|x| x.0 == key).map(|x| x.1.clone())) {
+        return x;
+    }
+    let found = snap_scan(db, net, p, m);
+    if let Ok(mut c) = CACHE.lock() {
+        if c.len() >= 256 {
+            c.remove(0);
+        }
+        c.push((key, found.clone()));
+    }
+    found
+}
+
+fn snap_scan(db: &Db, net: &RoutingNet, p: P, m: Mode) -> Option<Snap> {
     let mi = mode_idx(m);
     let mut r = 250.0;
     while r <= 20_000.0 {
@@ -764,14 +782,14 @@ pub fn draw(db: &Db, net: &RoutingNet, r: &Route, m: Mode) -> (f64, Vec<i64>, Ge
 
 /// Deciseconds from the start entries to every junction, up to `limit` seconds (Dijkstra).
 pub fn reach(net: &RoutingNet, sources: &[(u32, f64)], m: Mode, limit: f64) -> Vec<f64> {
-    reach_bounded(net, sources, m, limit, usize::MAX).unwrap_or_default()
+    reach_bounded(net, sources, m, limit, usize::MAX).map(|x| x.0).unwrap_or_default()
 }
 
-/// The same, but None once more than `cap` junctions are settled (then a sweep over all
-/// junctions, PHAST, is faster).
-pub fn reach_bounded(net: &RoutingNet, sources: &[(u32, f64)], m: Mode, limit: f64, cap: usize) -> Option<Vec<f64>> {
+/// The same, with the junctions reached (in the order of their times); None once more than
+/// `cap` junctions are settled (then a sweep over all junctions, PHAST, is faster).
+pub fn reach_bounded(net: &RoutingNet, sources: &[(u32, f64)], m: Mode, limit: f64, cap: usize) -> Option<(Vec<f64>, Vec<u32>)> {
     let limit = limit * 10.0;
-    let mut settled = 0usize;
+    let mut settled: Vec<u32> = Vec::new();
     let mut d = vec![f64::INFINITY; net.n()];
     let mut h = BinaryHeap::new();
     for &(v, c) in sources {
@@ -784,8 +802,8 @@ pub fn reach_bounded(net: &RoutingNet, sources: &[(u32, f64)], m: Mode, limit: f
         if k > d[u as usize] || k > limit {
             continue;
         }
-        settled += 1;
-        if settled > cap {
+        settled.push(u);
+        if settled.len() > cap {
             return None;
         }
         for e in net.edges(u) {
@@ -797,26 +815,93 @@ pub fn reach_bounded(net: &RoutingNet, sources: &[(u32, f64)], m: Mode, limit: f
             }
         }
     }
-    Some(d)
+    Some((d, settled))
 }
 
 /// The area reachable within `limit` seconds as a raster: the reachable parts of the edges
-/// (with the shapes of their ways) and what they enclose; `dist` in deciseconds.
-pub fn isochrone_raster(db: &Db, net: &RoutingNet, from: &Snap, dist: &[f64], m: Mode, limit: f64, cell_m: f64) -> Raster {
+/// and what they enclose; `dist` in deciseconds, `reached` the junctions within the limit if
+/// known (else all are looked at). An edge is drawn as a straight line between its junctions
+/// when its shape cannot leave that line by more than half a cell (a way of length L between
+/// points c apart stays within ½·√(L² − c²) of their line); only the other ways are read
+/// for their shapes.
+#[allow(clippy::too_many_arguments)]
+pub fn isochrone_raster(db: &Db, net: &RoutingNet, from: &Snap, dist: &[f64], reached: Option<&[u32]>, m: Mode, limit: f64, cell_m: f64) -> Raster {
     let mut r = Raster { lon0: from.point.0, lat0: from.point.1, size: cell_m, cells: HashSet::default(), bbox: BBoxF::EMPTY };
-    let mut parts: Vec<(usize, u16, u16, f64)> = Vec::new();
     let limit_ds = limit * 10.0;
-    for u in 0..net.n() {
-        let du = dist[u];
-        if du > limit_ds {
-            continue;
+    let all: Vec<u32>;
+    let junctions = match reached {
+        Some(r) => r,
+        None => {
+            all = (0..net.n() as u32).collect();
+            &all
         }
-        for e in net.edges(u as u32) {
-            let Some(c) = net.time(e, m, false) else { continue };
-            let frac = if c == 0 { 1.0 } else { ((limit_ds - du) / c as f64).clamp(0.0, 1.0) };
-            parts.push((e, net.span[e].0, net.span[e].1, frac));
-        }
-    }
+    };
+    // In parallel, over runs of junctions (near each other, as they are numbered along a
+    // Hilbert curve): the cell of every reached junction, the cells along the reachable part
+    // of every edge that is longer than half a cell or reachable only in part (an edge fully
+    // reachable and shorter only touches the cells of its junctions), straight where its
+    // shape stays within half a cell of the line, else noted to be drawn along its shape.
+    let half = cell_m / 2.0;
+    let r0 = &r;
+    let (cells, bbox, parts) = junctions
+        .par_chunks(16_384)
+        .map(|chunk| {
+            let mut cells: HashSet<(i32, i32)> = HashSet::default();
+            let mut bbox = BBoxF::EMPTY;
+            let mut parts: Vec<(usize, u16, u16, f64)> = Vec::new();
+            let mut mark = |a: P, b: P, frac: f64, len: f64| {
+                let steps = (len * frac / half).ceil().max(1.0) as usize;
+                for k in 0..=steps {
+                    let t = frac * k as f64 / steps as f64;
+                    let p = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+                    cells.insert(r0.cell_of(p));
+                    bbox.add(p);
+                }
+            };
+            let mut parts_of = Vec::new();
+            for &u in chunk {
+                let du = dist[u as usize];
+                if du > limit_ds {
+                    continue;
+                }
+                let pu = net.pt(u);
+                mark(pu, pu, 1.0, 0.0);
+                for e in net.edges(u) {
+                    let Some(c) = net.time(e, m, false) else { continue };
+                    let frac = if c == 0 { 1.0 } else { ((limit_ds - du) / c as f64).clamp(0.0, 1.0) };
+                    let l = net.len[e] as f64;
+                    if frac >= 1.0 && l <= half {
+                        continue;
+                    }
+                    let pv = net.pt(net.to[e]);
+                    let chord = geom::haversine(pu, pv);
+                    if 0.5 * (l * l - chord * chord).max(0.0).sqrt() <= half {
+                        mark(pu, pv, frac, chord);
+                    } else {
+                        parts_of.push((e, net.span[e].0, net.span[e].1, frac));
+                    }
+                }
+            }
+            parts.append(&mut parts_of);
+            (cells, bbox, parts)
+        })
+        .reduce(
+            || (HashSet::default(), BBoxF::EMPTY, Vec::new()),
+            |mut a, mut b| {
+                if a.0.len() < b.0.len() {
+                    std::mem::swap(&mut a, &mut b);
+                }
+                a.0.extend(b.0);
+                if !b.1.is_empty() {
+                    a.1.add((b.1.minx, b.1.miny));
+                    a.1.add((b.1.maxx, b.1.maxy));
+                }
+                a.2.append(&mut b.2);
+                a
+            },
+        );
+    r.cells = cells;
+    r.bbox = bbox;
     let mut ids: Vec<i64> = parts.iter().map(|p| net.ways[(net.way[p.0] & !ALONG) as usize].0).collect();
     ids.push(net.ways[from.way].0);
     ids.sort_unstable();
