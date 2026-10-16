@@ -699,9 +699,13 @@ const ChatView = {
       turns.value = [];
       nextTick(() => input.value && input.value.focus());
     }
-    function scrollDown() {
+    // the newest question moves up to the top of the view: its answer, map or chart builds up
+    // below it in sight (the list has room below its end for that)
+    function scrollDown(smooth = true) {
       const el = document.querySelector(".chat .turns");
-      if (el) el.scrollTop = el.scrollHeight;
+      const last = el && el.querySelector(".turn:last-of-type");
+      if (!last) return;
+      el.scrollTo({ top: Math.max(0, last.offsetTop - 56), behavior: smooth ? "smooth" : "auto" });
     }
     // ↑ and ↓ go through the earlier questions (from the first or last line of the field); the
     // text being written comes back after the newest one
@@ -732,7 +736,7 @@ const ChatView = {
       else if (e.key === "ArrowUp") browse(e, -1);
       else if (e.key === "ArrowDown") browse(e, 1);
     }
-    onMounted(() => nextTick(() => { scrollDown(); input.value && input.value.focus(); }));
+    onMounted(() => nextTick(() => { scrollDown(false); input.value && input.value.focus(); }));
     // copies a text; the symbol shows a check for a moment
     const copied = ref(null);
     function copy(text, id) {
@@ -758,7 +762,7 @@ const ChatView = {
         <button class="icon" title="Advanced query editor" aria-label="Advanced query editor" @click="emit('advanced')" v-html="ICONS.rocket"></button>
       </div>
       <div class="turns">
-        <img v-if="!turns.length" class="chat-logo" src="knut.svg" alt="knut">
+        <img v-if="!turns.length" class="chat-logo" src="knut-loading.svg" alt="knut">
         <div v-for="(t, i) in turns" :key="i" class="turn">
           <!-- a question being edited: asked again from here on (Enter), or left as it was (Esc) -->
           <div v-if="editing === i" class="question-edit">
@@ -809,7 +813,7 @@ const ChatView = {
         </div>
       </div>
       <div :class="['chat-input', { busy }]">
-        <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask a follow-up question…' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
+        <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask a follow-up question …' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
           @keydown="key" :disabled="busy && false"></textarea>
         <button v-if="!busy" class="primary" :disabled="!text.trim()" title="Ask (Enter)" @click="ask">Ask</button>
         <button v-else class="danger" title="Cancel (Esc)" @click="cancel">Cancel</button>

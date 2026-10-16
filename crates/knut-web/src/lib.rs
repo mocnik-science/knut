@@ -235,6 +235,7 @@ fn handle(st: &State, mut req: Request) {
         (Method::Get, "/examples.json") => send(req, 200, "application/json; charset=utf-8", EXAMPLES.to_string()),
         (Method::Get, "/docs.html") => send(req, 200, "text/html; charset=utf-8", DOCS.to_string()),
         (Method::Get, "/knut.svg") => send_bytes(req, "image/svg+xml", LOGO.as_bytes()),
+        (Method::Get, "/knut-loading.svg") => send_bytes(req, "image/svg+xml", LOGO.as_bytes()),
         (Method::Get, "/icon.svg") => send_bytes(req, "image/svg+xml", ICON.as_bytes()),
         (Method::Get, path) if ICONS.iter().any(|i| i.0 == path) => {
             let icon = ICONS.iter().find(|i| i.0 == path).map_or(&[][..], |i| i.1);

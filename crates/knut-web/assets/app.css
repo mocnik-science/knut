@@ -294,6 +294,11 @@ input[type=search], input.text {
 /* ----- text interface: questions in plain language ---------------------------------- */
 
 .chat { position: fixed; inset: 0; z-index: 20; background: var(--bg); display: flex; flex-direction: column; }
+/* the top bar keeps the answers that scroll under it out of sight, fading out downwards */
+.chat::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 12px; height: 60px; z-index: 1; pointer-events: none;
+  background: linear-gradient(var(--bg) 70%, transparent);
+}
 /* the logo in the top left corner after the first question (fading in), not a control */
 .chat-brand {
   position: absolute; top: 8px; left: 14px; height: 34px; width: auto; z-index: 1; pointer-events: none; user-select: none;
@@ -308,7 +313,8 @@ input[type=search], input.text {
 .chat-top button.icon, .chat-top button.icon:hover { background: none; border-color: transparent; }
 .chat-top button.icon:hover { color: var(--fg); }
 .chat-top button.icon.active { color: var(--fg); }
-.chat .turns { flex: 1; overflow: auto; padding: 56px 16px 36px; }
+/* room below the last answer: it can move up to the top of the view, well above the field */
+.chat .turns { position: relative; flex: 1; overflow: auto; padding: 56px 16px max(36px, calc(100vh - 260px)); }
 .chat .turn { max-width: 760px; margin: 0 auto 22px; }
 /* copy symbols: next to the question (right) and the answer (left), shown under the mouse */
 .chat .question-row, .chat .answer-row { position: relative; }
@@ -412,4 +418,3 @@ input[type=search], input.text {
 .chat.start .chat-input { margin-bottom: 18vh; }
 /* the note right below the field (the field then keeps less room below it) */
 .chat-disclaimer { margin: -12px auto 10px; font-size: 11px; color: var(--fg-soft); text-align: center; }
-
