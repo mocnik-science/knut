@@ -385,13 +385,17 @@ fn start_chat(st: &State, history: Vec<(String, String)>, typed: Option<PathBuf>
             knut_exec::quick_check(q, &opts).into_iter().filter(|p| p.severity == "error").map(|p| p.text).collect()
         };
         let empty = || Collected { code: 0, messages: String::new(), outputs: Vec::new(), cancelled: false, problems: Vec::new() };
-        // a run that fails before any output goes back to the model (an unknown place, …)
+        // a run that fails before any output goes back to the model (an unknown place, …); the
+        // time of the last run is the query's own, without the model
+        let ran = std::cell::Cell::new(None::<f64>);
         let run = |q: &str| -> Result<Collected, String> {
             if control.is_cancelled() {
                 return Ok(Collected { cancelled: true, ..empty() });
             }
             let opts = Options { db: db.clone(), limit: TEXT_ROWS, timing: false, control: Some(control.clone()), shared_db: shared_db.clone(), ..Default::default() };
+            let t0 = Instant::now();
             let r = knut_exec::run_collect(q, Some("query.knut"), &base, &opts, MAX_FEATURES);
+            ran.set(Some(t0.elapsed().as_secs_f64()));
             if r.code != 0 && r.outputs.is_empty() && !r.cancelled { Err(r.messages) } else { Ok(r) }
         };
         let (result, info) = match chat::solve(&*model, &system, &history, &check, &run, &step) {
@@ -413,6 +417,10 @@ fn start_chat(st: &State, history: Vec<(String, String)>, typed: Option<PathBuf>
                 (result, info)
             }
         };
+        let mut info = info;
+        if let (Some(secs), Some(o)) = (ran.get(), info.as_object_mut()) {
+            o.insert("query_seconds".into(), json!(secs));
+        }
         if let Ok(mut c) = job.chat.lock() {
             *c = Some(info);
         }

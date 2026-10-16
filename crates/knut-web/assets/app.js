@@ -66,7 +66,7 @@ const ICONS = {
   auto: svg('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
   settings: svg('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
   // a new conversation
-  restart: svg('<path d="M21 6H3"/><path d="M7 12H3"/><path d="M7 18H3"/><path d="M12 18a5 5 0 0 0 9-3 4.5 4.5 0 0 0-4.5-4.5c-1.33 0-2.54.54-3.41 1.41L11 14"/><path d="M11 10v4h4"/>'),
+  restart: svg('<path d="m16 22-1-4"/><path d="M19 13.99a1 1 0 0 0 1-1V12a2 2 0 0 0-2-2h-3a1 1 0 0 1-1-1V4a2 2 0 0 0-4 0v5a1 1 0 0 1-1 1H6a2 2 0 0 0-2 2v.99a1 1 0 0 0 1 1"/><path d="M5 14h14l1.973 6.767A1 1 0 0 1 20 22H4a1 1 0 0 1-.973-1.233z"/><path d="m8 22 1-4"/>'),
   // About
   bird: svg('<path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="m20 7 2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/>'),
   // the text interface: questions in plain language
@@ -118,28 +118,40 @@ watch(accent, v => { store("accent", v); applyAccent(); });
 // the charts: the accent first, then the other colours of knut
 const chatColors = () => [accentColor(), ...COLORS.filter(c => c !== accentColor())];
 
-// ----- a choice in the top bar: only the chosen one shows, the others under the mouse (on a
-// touch screen, after a tap on it); they come in on its left -------------------------------
+// ----- a choice in the top bar: only the chosen one shows; under the mouse (on a touch screen,
+// after a tap on it) the others fold out below it, in an order that stays until it folds up -----
 
+const HOVER = window.matchMedia("(hover: hover)").matches;
 const Pick = {
   props: { items: Array, modelValue: String, label: String },
   emits: ["update:modelValue"],
   setup(props, { emit }) {
+    const el = ref(null);
     const open = ref(false);
-    const ordered = computed(() => [...props.items.filter(t => t.id !== props.modelValue), ...props.items.filter(t => t.id === props.modelValue)]);
-    function choose(t) {
-      if (t.id === props.modelValue) open.value = !open.value;
-      else { emit("update:modelValue", t.id); open.value = false; }
+    const order = ref([]);
+    const chosenFirst = () => [...props.items.filter(t => t.id === props.modelValue), ...props.items.filter(t => t.id !== props.modelValue)];
+    const shown = computed(() => open.value ? order.value : chosenFirst().slice(0, 1));
+    function show() { if (!open.value) { order.value = chosenFirst(); open.value = true; } }
+    const hide = () => { open.value = false; };
+    function choose(t, i) {
+      if (!open.value) return show();
+      emit("update:modelValue", t.id);
+      if (i === 0 && !HOVER) hide();
     }
-    return { open, ordered, choose };
+    const outside = e => { if (open.value && el.value && !el.value.contains(e.target)) hide(); };
+    onMounted(() => document.addEventListener("pointerdown", outside));
+    onUnmounted(() => document.removeEventListener("pointerdown", outside));
+    return { el, open, shown, choose, show, hide, HOVER };
   },
   template: `
-    <div :class="['pick', { open }]" role="group" :aria-label="label" @mouseleave="open = false">
-      <button v-for="t in ordered" :key="t.id" :class="['icon', { active: t.id === modelValue }]" :title="t.title" :aria-label="t.title"
-        :aria-pressed="t.id === modelValue" @click="choose(t)">
-        <span v-if="t.color" class="swatch" :style="{ background: t.color }"></span>
-        <span v-else class="glyph" v-html="t.icon"></span>
-      </button>
+    <div ref="el" :class="['pick', { open }]" role="group" :aria-label="label" @mouseenter="HOVER && show()" @mouseleave="HOVER && hide()">
+      <div class="pick-list">
+        <button v-for="(t, i) in shown" :key="t.id" :class="['icon', { active: t.id === modelValue }]" :title="t.title" :aria-label="t.title"
+          :aria-pressed="t.id === modelValue" @click="choose(t, i)">
+          <span v-if="t.color" class="swatch" :style="{ background: t.color }"></span>
+          <span v-else class="glyph" v-html="t.icon"></span>
+        </button>
+      </div>
     </div>`,
 };
 
@@ -156,6 +168,23 @@ const AboutText = {
     <p>Its parts written after September 2023 have been supported by the <em>EXDIGIT&nbsp;(Excellence in Digital Sciences and Interdisciplinary Technologies)</em> project, funded by Land Salzburg under grant number 20204-WISS/263/6-6022.</p>
     <p>The code is licensed under the <a href="https://github.com/mocnik-science/knut/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>.</p>
     <p class="version" v-if="info && info.version">Version {{ info.version }}</p>`,
+};
+// the box over the whole page, the page dimmed and blurred behind it: gone with a click beside it, or with Esc
+const AboutBox = {
+  components: { AboutText },
+  props: { info: Object, open: Boolean },
+  emits: ["close"],
+  setup(props, { emit }) {
+    const esc = e => { if (e.key === "Escape" && props.open) emit("close"); };
+    onMounted(() => window.addEventListener("keydown", esc));
+    onUnmounted(() => window.removeEventListener("keydown", esc));
+  },
+  template: `
+    <Transition name="fade">
+      <div v-if="open" class="about-overlay" @click.self="$emit('close')">
+        <div class="about-box docs about" role="dialog" aria-label="About knut"><AboutText :info="info" /></div>
+      </div>
+    </Transition>`,
 };
 
 // ----- panel: slides out to a small strip, or fills the window --------------------------
@@ -228,6 +257,8 @@ const Panel = {
         </div>
       </header>
       <button class="handle" :title="'Show ' + label" :aria-label="'Show ' + label" @click="toggleCollapse" v-html="inward"></button>
+      <!-- what stays at hand at the top of the strip while the panel is slid out of the way -->
+      <div class="strip"><slot name="strip"></slot></div>
       <div class="body"><slot></slot></div>
     </aside>`,
 };
@@ -613,7 +644,7 @@ const AnswerChart = {
 };
 
 const ChatView = {
-  components: { AnswerMap, AnswerChart, Pick, AboutText },
+  components: { AnswerMap, AnswerChart, Pick, AboutBox },
   props: { info: Object, db: String },
   emits: ["advanced", "open"],
   setup(props, { emit }) {
@@ -827,9 +858,23 @@ const ChatView = {
       beat = setTimeout(play, 100);
     });
     onUnmounted(() => clearTimeout(beat));
-    // about knut, in a box over the page: gone with a click beside it, or with Esc
+    // about knut, in a box over the page
     const about = ref(false);
-    const closeAbout = e => { if (e.key === "Escape") about.value = false; };
+    // the advanced editor only after a word of warning (unless one asked not to be asked again)
+    const warn = ref(false);
+    const dontAsk = ref(false);
+    function toAdvanced() {
+      if (load("advanced:no-warning", false)) emit("advanced");
+      else { dontAsk.value = false; warn.value = true; }
+    }
+    function confirmAdvanced() {
+      if (dontAsk.value) store("advanced:no-warning", true);
+      warn.value = false;
+      emit("advanced");
+    }
+    // a new conversation only after asking: the current one is gone then
+    const asking = ref(false);
+    const closeAbout = e => { if (e.key === "Escape") { warn.value = false; asking.value = false; } };
     window.addEventListener("keydown", closeAbout);
     onUnmounted(() => window.removeEventListener("keydown", closeAbout));
     // copies a text; the symbol shows a check for a moment
@@ -841,7 +886,7 @@ const ChatView = {
     }
     return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds, theme, THEMES, ICONS, copied, copy, shown, regenerate, showOnMap, mapQueryOf,
       editing, editText, editBox, startEdit, submitEdit, editKey, retry, loader, loaderSvg,
-      about, accent, ACCENTS };
+      about, accent, ACCENTS, warn, dontAsk, toAdvanced, confirmAdvanced, asking };
   },
   template: `
     <div :class="['chat', { start: !turns.length }]">
@@ -849,14 +894,14 @@ const ChatView = {
       <div :class="['chat-brand', { shown: turns.length }]" aria-hidden="true"><img src="knut.svg" alt=""></div>
       <div class="chat-top">
         <template v-if="turns.length">
-          <button class="icon" :disabled="busy" title="Start a new conversation" aria-label="Start a new conversation" @click="clear" v-html="ICONS.restart"></button>
+          <button class="icon" :disabled="busy" title="Start a new conversation" aria-label="Start a new conversation" @click="asking = true" v-html="ICONS.restart"></button>
           <span class="sep">|</span>
         </template>
         <Pick :items="ACCENTS" v-model="accent" label="Accent colour" />
         <Pick :items="THEMES" v-model="theme" label="Appearance" />
         <button class="icon" title="About knut" aria-label="About knut" @click="about = true" v-html="ICONS.bird"></button>
         <span class="sep">|</span>
-        <button class="icon" title="Advanced query editor" aria-label="Advanced query editor" @click="emit('advanced')" v-html="ICONS.rocket"></button>
+        <button class="icon" title="Advanced query editor" aria-label="Advanced query editor" @click="toAdvanced" v-html="ICONS.rocket"></button>
       </div>
       <div class="turns">
         <div v-if="!turns.length" ref="loader" class="chat-logo knut-loader" role="img" aria-label="knut" v-html="loaderSvg"></div>
@@ -898,11 +943,14 @@ const ChatView = {
             </Transition>
             <!-- right below the answer: the time it took; opened, the query and a way to the editor -->
             <details v-if="t.query" class="query">
-              <summary :title="'The query' + (t.seconds ? ', computed in ' + fmtSeconds(t.seconds) : '')">{{ t.seconds ? fmtSeconds(t.seconds) : 'query' }}</summary>
+              <summary :title="'The query' + (t.seconds ? '; the whole answer took ' + fmtSeconds(t.seconds) : '')">{{ t.seconds ? fmtSeconds(t.seconds) : 'query' }}</summary>
               <div class="query-code">
                 <pre>{{ t.query }}</pre>
-                <button v-if="!(busy && i === turns.length - 1)" class="icon" title="Open in the advanced query editor" aria-label="Open in the advanced query editor"
-                  @click="emit('open', t)" v-html="ICONS.rocket"></button>
+                <div class="query-tools">
+                  <span v-if="t.query_seconds != null" class="query-time" title="The time the query took to run (without the language model)">{{ fmtSeconds(t.query_seconds) }}</span>
+                  <button v-if="!(busy && i === turns.length - 1)" class="icon" title="Open in the advanced query editor" aria-label="Open in the advanced query editor"
+                    @click="emit('open', t)" v-html="ICONS.rocket"></button>
+                </div>
               </div>
               <ul v-if="t.problems && t.problems.length" class="problems"><li v-for="(p, k) in t.problems" :key="k"><pre>{{ p }}</pre></li></ul>
             </details>
@@ -914,26 +962,48 @@ const ChatView = {
         <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask a follow-up question …' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
           @keydown="key" :disabled="busy && false"></textarea>
         <button v-if="!busy" :class="['primary', 'ask', { empty: !text.trim() }]" :disabled="!text.trim()" :tabindex="text.trim() ? 0 : -1" title="Ask (Enter)" @click="ask">Ask</button>
-        <button v-else class="danger" title="Cancel (Esc)" @click="cancel">Cancel</button>
+        <button v-else class="cancel" title="Cancel (Esc)" @click="cancel">Cancel</button>
       </div>
       <p v-if="turns.length" class="chat-disclaimer">knut is experimental and might be mistaken.</p>
       </div>
+      <AboutBox :info="info" :open="about" @close="about = false" />
       <Transition name="fade">
-        <div v-if="about" class="about-overlay" @click.self="about = false">
-          <div class="about-box docs about" role="dialog" aria-label="About knut"><AboutText :info="info" /></div>
+        <div v-if="asking" class="about-overlay" @click.self="asking = false">
+          <div class="about-box confirm-box" role="dialog" aria-label="Start a new conversation">
+            <h3>Start a new conversation</h3>
+            <p>Are you sure you want to delete the current conversation?</p>
+            <div class="confirm-buttons">
+              <button @click="asking = false">Cancel</button>
+              <button class="primary" @click="asking = false; clear()">Delete current conversation</button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+      <Transition name="fade">
+        <div v-if="warn" class="about-overlay" @click.self="warn = false">
+          <div class="about-box confirm-box" role="dialog" aria-label="Open the advanced query editor">
+            <h3>Advanced query editor</h3>
+            <p>The advanced editor is designed for users who are comfortable with writing queries using the knut language themselves. Are you sure you want to switch? (You can always switch back using the <span class="inline-icon" v-html="ICONS.chat"></span> sign.)</p>
+            <label class="dont-ask"><input type="checkbox" v-model="dontAsk"> Don't ask again</label>
+            <div class="confirm-buttons">
+              <button @click="warn = false">Stay</button>
+              <button class="primary" @click="confirmAdvanced">Open advanced editor</button>
+            </div>
+          </div>
         </div>
       </Transition>
     </div>`,
 };
 
 const App = {
-  components: { Panel, MapView, ChatView, AboutText },
+  components: { Panel, MapView, ChatView, AboutBox },
   setup() {
     const map = ref(null);
     const editorHost = ref(null);
     let editor = null;
     const state = reactive({
       tab: "query",
+      about: false,
       info: null,
       query: load("query", ""),
       db: load("db", ""),
@@ -1130,6 +1200,7 @@ const App = {
         state.query = t.query;
         if (t.outputs && t.outputs.length) {
           state.results = t.outputs;
+          state.elapsed = t.query_seconds || 0;
           state.visible = t.outputs.map(() => true);
           map.value.show(t.outputs);
           nudge(".panel.right");
@@ -1184,12 +1255,10 @@ const App = {
           <button v-for="t in ['query', 'examples', 'docs']" :key="t" role="tab"
             :class="{ active: state.tab === t }" @click="state.tab = t">{{ t[0].toUpperCase() + t.slice(1) }}</button>
           <button role="tab" :class="['symbol', { active: state.tab === 'settings' }]" title="Settings" aria-label="Settings" @click="state.tab = 'settings'" v-html="ICONS.settings"></button>
-          <button role="tab" :class="['symbol', { active: state.tab === 'about' }]" title="About" aria-label="About" @click="state.tab = 'about'" v-html="ICONS.bird"></button>
         </nav>
       </template>
       <template #tools>
-        <button v-if="state.info && state.info.chat" class="icon" title="Text interface: questions in plain language" aria-label="Text interface"
-          @click="state.mode = 'text'" v-html="ICONS.chat"></button>
+        <button class="icon" title="About knut" aria-label="About knut" @click="state.about = true" v-html="ICONS.bird"></button>
       </template>
 
       <div v-show="state.tab === 'query'" class="tabpane">
@@ -1201,7 +1270,7 @@ const App = {
         </div>
         <div class="actions">
           <button v-if="!state.running" class="primary" :disabled="!state.query.trim()" title="Run (⌘/Ctrl + Enter)" @click="run">Run</button>
-          <button v-else class="danger" :disabled="state.cancelling" title="Cancel (Esc)" @click="cancel">Cancel</button>
+          <button v-else class="cancel" :disabled="state.cancelling" title="Cancel (Esc)" @click="cancel">Cancel</button>
           <button title="Clear the query, the results and the map" @click="reset">Reset</button>
           <div v-if="state.running" class="progress">
             <div class="label"><span>{{ progressLabel }}</span><span>{{ progressRight }}</span></div>
@@ -1252,15 +1321,19 @@ const App = {
           </div>
         </section>
       </div>
-
-      <div v-if="state.tab === 'about'" class="docs about">
-        <AboutText :info="state.info" />
-      </div>
     </Panel>
 
     <Panel side="right" label="the results">
       <template #header>
         <h2>Results <span class="meta">{{ summary }}</span></h2>
+      </template>
+      <template #tools>
+        <button v-if="state.info && state.info.chat" class="icon" title="Text interface: questions in plain language" aria-label="Text interface"
+          @click="state.mode = 'text'" v-html="ICONS.chat"></button>
+      </template>
+      <template #strip>
+        <button v-if="state.info && state.info.chat" class="icon" title="Text interface: questions in plain language" aria-label="Text interface"
+          @click="state.mode = 'text'" v-html="ICONS.chat"></button>
       </template>
       <div v-if="!state.results.length" class="empty-note">Run a query to see its results here and on the map.</div>
       <details v-for="(r, i) in state.results" :key="i" class="result" open>
@@ -1281,7 +1354,8 @@ const App = {
         </div>
         <pre>{{ r.text }}</pre>
       </details>
-    </Panel>`,
+    </Panel>
+    <AboutBox :info="state.info" :open="state.about" @close="state.about = false" />`,
 };
 
 createApp(App).mount("#app");
