@@ -200,10 +200,15 @@ const MapView = {
     let ready = null;
     let layers = [];
 
+    // the base map recedes behind the results: paler, with little colour
+    const RECEDE = { "raster-saturation": -0.65, "raster-contrast": -0.2, "raster-brightness-min": 0.2 };
+
     onMounted(() => {
+      // the default map starts receded (no flash of full colour); other styles once loaded
+      const osm = { ...OSM_STYLE, layers: [{ ...OSM_STYLE.layers[0], paint: RECEDE }] };
       map = markRaw(new maplibregl.Map({
         container: el.value,
-        style: (props.info && props.info.style) || OSM_STYLE,
+        style: (props.info && props.info.style) || osm,
         center: [10, 51], zoom: 4, attributionControl: { compact: true },
       }));
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
@@ -220,6 +225,12 @@ const MapView = {
       };
       collapseAttribution();
       map.once("load", collapseAttribution);
+      map.once("load", () => {
+        for (const l of map.getStyle().layers) {
+          if (l.type !== "raster" || layers.includes(l.id)) continue;
+          for (const [k, v] of Object.entries(RECEDE)) map.setPaintProperty(l.id, k, v);
+        }
+      });
     });
 
     // room for the panels that cover the map
@@ -594,7 +605,7 @@ const App = {
       </div>
 
       <div v-if="state.tab === 'about'" class="docs about">
-        <h2>knut</h2>
+        <img class="logo" src="knut.svg" alt="knut">
         <p><em>knut</em> is short for <em>knutpunkt</em>, the Swedish word for ‘junction’ or ‘node’, one of the building blocks of OpenStreetMap data.</p>
         <p>It reads OpenStreetMap PBF files (with history) and converts them into its own compact, high-performance data format, which enables fast queries of OpenStreetMap data in Rust, in Python, on the command line, and in this web interface, using the <em>knut</em> query language.</p>
         <p>This application is written and maintained by Franz-Benjamin Mocnik, <a href="mailto:mail@mocnik-science.net">mail@mocnik-science.net</a>.</p>

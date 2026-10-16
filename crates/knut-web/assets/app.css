@@ -182,11 +182,12 @@ input[type=search], input.text {
 .themes button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 6px; font-size: 12px; color: var(--fg-soft); }
 .themes button svg { width: 22px; height: 22px; }
 .themes button.active { border-color: var(--accent); color: var(--fg); box-shadow: 0 0 0 1px var(--accent) inset; }
+/* the editor fills the width of the panel, right below its header */
 .cm-host {
   flex: 1; min-height: 160px; display: flex; flex-direction: column;
-  border: 1px solid var(--border); border-radius: 7px; overflow: hidden;
+  margin: -10px -10px 0; border-bottom: 1px solid var(--border); overflow: hidden;
 }
-.cm-host:focus-within { border-color: var(--accent); }
+.cm-host:focus-within { border-bottom-color: var(--accent); }
 .cm-host .cm-editor { flex: 1; min-height: 0; }
 .actions { display: flex; align-items: flex-end; gap: 8px; margin: 0; padding: 0; }
 .actions > button:first-child { margin-left: 0; }
@@ -211,7 +212,9 @@ input[type=search], input.text {
 
 /* ----- examples and docs ------------------------------------------------------------ */
 
-.example { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+/* list items fill the width of the panel, divided by lines */
+.example { margin: 0 -10px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.example + .example { margin-top: -10px; }
 .example h3 { margin: 0 0 2px; font-size: 13px; }
 .example h3 .cat { font-weight: 400; color: var(--fg-soft); font-size: 11px; margin-left: 6px; text-transform: uppercase; letter-spacing: 0.04em; }
 .example p { margin: 0 0 6px; color: var(--fg-soft); font-size: 13px; }
@@ -228,11 +231,14 @@ input[type=search], input.text {
 .docs th, .docs td { text-align: left; vertical-align: top; padding: 3px 6px; border-bottom: 1px solid var(--border); }
 .docs td:first-child { white-space: nowrap; }
 .about p { font-size: 14px; line-height: 1.55; }
+.about .logo { display: block; width: min(200px, 60%); height: auto; margin: 28px auto 22px; }
 .about .version { color: var(--fg-soft); font-size: 12px; margin-top: 18px; }
 
 /* ----- results ---------------------------------------------------------------------- */
 
-.result { border: 1px solid var(--border); border-radius: 8px; flex-shrink: 0; }
+.result { margin: 0 -10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.panel .body > .result:first-of-type { margin-top: -10px; }
+.result + .result { margin-top: -10px; }
 .result > summary {
   list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 7px 10px;
 }
@@ -262,6 +268,14 @@ input[type=search], input.text {
 
 /* ----- map popups ------------------------------------------------------------------- */
 
+/* map controls as MapLibre draws them, but + and − rounded as a whole (the buttons
+   themselves square, which avoids a notch in the middle), and the round (i) with the same
+   ring as + and − */
+.maplibregl-ctrl.maplibregl-ctrl-group { border-radius: 8px; overflow: hidden; }
+.maplibregl-ctrl-group button { border-radius: 0; }
+.maplibregl-ctrl.maplibregl-ctrl-group, .maplibregl-ctrl.maplibregl-ctrl-attrib.maplibregl-compact { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1); }
+/* the closed (i) centred under + and − (29 px wide, the (i) 24 px) */
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show) { margin-right: calc(var(--gap) + 2.5px); }
 .maplibregl-popup-content { background: var(--bg); color: var(--fg); border-radius: 8px; padding: 8px 10px; max-height: 50vh; overflow: auto; }
 .maplibregl-popup-tip { display: none; }
 .popup h4 { margin: 0 0 4px; font-size: 13px; }

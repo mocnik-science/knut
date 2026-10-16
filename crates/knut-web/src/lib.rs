@@ -32,6 +32,13 @@ const EDITOR_JS: &str = include_str!("../assets/editor.js");
 const APP_CSS: &str = include_str!("../assets/app.css");
 const EXAMPLES: &str = include_str!("../assets/examples.json");
 const DOCS: &str = include_str!("../assets/docs.html");
+const LOGO: &str = include_str!("../assets/knut.svg");
+const ICONS: [(&str, &[u8]); 4] = [
+    ("/icon-32.png", include_bytes!("../assets/icon-32.png")),
+    ("/icon-180.png", include_bytes!("../assets/icon-180.png")),
+    ("/icon-192.png", include_bytes!("../assets/icon-192.png")),
+    ("/icon-512.png", include_bytes!("../assets/icon-512.png")),
+];
 
 /// Rows per result in the text shown next to the map.
 const TEXT_ROWS: usize = 500;
@@ -157,6 +164,11 @@ fn send(req: Request, status: u16, ctype: &str, body: String) {
     let _ = req.respond(r);
 }
 
+fn send_bytes(req: Request, ctype: &str, body: &[u8]) {
+    let r = Response::from_data(body.to_vec()).with_status_code(200).with_header(header("Content-Type", ctype)).with_header(header("Cache-Control", "max-age=86400"));
+    let _ = req.respond(r);
+}
+
 fn send_json(req: Request, status: u16, v: &J) {
     send(req, status, "application/json; charset=utf-8", v.to_string());
 }
@@ -170,6 +182,11 @@ fn handle(st: &State, mut req: Request) {
         (Method::Get, "/app.css") => send(req, 200, "text/css; charset=utf-8", APP_CSS.to_string()),
         (Method::Get, "/examples.json") => send(req, 200, "application/json; charset=utf-8", EXAMPLES.to_string()),
         (Method::Get, "/docs.html") => send(req, 200, "text/html; charset=utf-8", DOCS.to_string()),
+        (Method::Get, "/knut.svg") => send_bytes(req, "image/svg+xml", LOGO.as_bytes()),
+        (Method::Get, path) if ICONS.iter().any(|i| i.0 == path) => {
+            let icon = ICONS.iter().find(|i| i.0 == path).map_or(&[][..], |i| i.1);
+            send_bytes(req, "image/png", icon)
+        }
         (Method::Get, "/api/info") => {
             let info = info(st);
             send_json(req, 200, &info)
