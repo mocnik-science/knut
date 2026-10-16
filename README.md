@@ -1,4 +1,5 @@
 # knut
+<p align="center"><img src="https://raw.githubusercontent.com/mocnik-science/knut/main/crates/knut-web/assets/knut.svg" alt="knut" width="240"></p>
 
 > *knut* is short for *knutpunkt*, the Swedish word for ‘junction’ or ‘node’, one of the building blocks of OpenStreetMap data.
 
