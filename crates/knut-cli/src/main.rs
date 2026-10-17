@@ -184,9 +184,10 @@ enum ManageCmd {
         #[arg(long)]
         explain: bool,
     },
-    /// Build an index and add it: places, names, addresses, keys, changesets, routing, routing-ch, routing-cch
+    /// Build indexes and add them, one after the other: places, names, addresses, keys, changesets, routing, routing-ch, routing-cch
     Add {
-        what: String,
+        #[arg(required = true)]
+        what: Vec<String>,
         /// latest (default), daily, weekly, monthly, yearly or full
         #[arg(long)]
         time: Option<String>,

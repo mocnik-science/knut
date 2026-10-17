@@ -110,6 +110,12 @@ fn row_text(r: &Row, progress: Option<f64>) -> String {
     )
 }
 
+/// A row whose index waits for the running task.
+fn row_text_waiting(r: &Row) -> String {
+    let info = r.kind.info();
+    format!("{:>W_ID$}  {:<W_NAME$} {:<W_SORT$} {:<W_TIME$} {:<17}", "–", info.name, info.sort, r.temporal.name(), "waiting...")
+}
+
 fn header_text() -> String {
     format!(
         "{:>W_ID$}  {:<W_NAME$} {:<W_SORT$} {:<W_TIME$} {:<17} {:>9}  {}",
@@ -172,7 +178,7 @@ pub fn print_summary(path: &Path, h: &Header, meta: Option<&str>) {
 
 pub enum Command {
     Ls { explain: bool },
-    Add { what: String, temporal: Option<String> },
+    Add { what: Vec<String>, temporal: Option<String> },
     Rm { id: u32, yes: bool },
     Compact,
     Upgrade,
@@ -222,28 +228,45 @@ pub fn run(path: &Path, cmd: Option<Command>) -> Result<(), String> {
             Ok(())
         }
         Command::Add { what, temporal } => {
-            let kind = kind_of(&what)?;
-            let temporal = match temporal {
-                Some(t) => Temporal::parse(&t).ok_or_else(|| format!("unknown time \"{t}\"; one of: latest, daily, weekly, monthly, yearly, full"))?,
-                None => indexes::supported(kind).first().copied().unwrap_or(Temporal::Latest),
-            };
-            let p = Progress::default();
-            let label = kind.info().name;
-            let done = std::sync::atomic::AtomicBool::new(false);
-            let id = std::thread::scope(|s| {
-                s.spawn(|| {
-                    while !done.load(std::sync::atomic::Ordering::Relaxed) {
-                        progress_line(label, p.get());
-                        std::thread::sleep(std::time::Duration::from_millis(200));
-                    }
+            // all checked before the first is built; then one after the other, the others waiting
+            let mut jobs = Vec::new();
+            let h = container::header(path).map_err(|e| e.to_string())?;
+            for w in &what {
+                let kind = kind_of(w)?;
+                let t = match &temporal {
+                    Some(t) => Temporal::parse(t).ok_or_else(|| format!("unknown time \"{t}\"; one of: latest, daily, weekly, monthly, yearly, full"))?,
+                    None => indexes::supported(kind).first().copied().unwrap_or(Temporal::Latest),
+                };
+                if let Some(id) = indexes::existing(&h, kind, t) {
+                    return Err(format!("the {} ({}) is already built as element {id}; to build it again, remove it first: knut manage FILE rm {id}", kind.info().name_in_text(), t.name()));
+                }
+                if !jobs.contains(&(kind, t)) {
+                    jobs.push((kind, t));
+                }
+            }
+            for (i, &(kind, t)) in jobs.iter().enumerate() {
+                let waiting: Vec<&str> = jobs[i + 1..].iter().map(|(k, _)| k.info().name).collect();
+                if !waiting.is_empty() {
+                    eprintln!("waiting: {}", waiting.join(", "));
+                }
+                let p = Progress::default();
+                let label = kind.info().name;
+                let done = std::sync::atomic::AtomicBool::new(false);
+                let id = std::thread::scope(|s| {
+                    s.spawn(|| {
+                        while !done.load(std::sync::atomic::Ordering::Relaxed) {
+                            progress_line(label, p.get());
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        }
+                    });
+                    let r = indexes::add(path, kind, t, &p);
+                    done.store(true, std::sync::atomic::Ordering::Relaxed);
+                    r
                 });
-                let r = indexes::add(path, kind, temporal, &p);
-                done.store(true, std::sync::atomic::Ordering::Relaxed);
-                r
-            });
-            eprintln!();
-            let id = id?;
-            println!("added element {id}: {label} ({})", temporal.name());
+                eprintln!();
+                let id = id?;
+                println!("added element {id}: {label} ({})", t.name());
+            }
             Ok(())
         }
         Command::Rm { id, yes } => {
@@ -324,6 +347,8 @@ mod tui {
         mode: Mode,
         message: String,
         job: Option<Job>,
+        /// indexes chosen while another task runs: built in turn
+        waiting: std::collections::VecDeque<(ElementKind, Temporal)>,
     }
 
     impl App {
@@ -356,6 +381,7 @@ mod tui {
             mode: Mode::Normal,
             message: String::new(),
             job: None,
+            waiting: std::collections::VecDeque::new(),
         };
         app.reload()?;
         // start on the first index
@@ -376,6 +402,13 @@ mod tui {
                     Err(_) => format!("{} failed", j.label),
                 };
                 app.reload()?;
+                // the next waiting index (unless it was built meanwhile)
+                while app.job.is_none() {
+                    let Some((kind, t)) = app.waiting.pop_front() else { break };
+                    if indexes::existing(&app.header, kind, t).is_none() {
+                        start_add(app, kind, t);
+                    }
+                }
             }
             term.draw(|f| draw(f, app)).map_err(|e| e.to_string())?;
             if !event::poll(Duration::from_millis(150)).map_err(|e| e.to_string())? {
@@ -403,14 +436,14 @@ mod tui {
                     }
                     KeyCode::Enter => match indexes::existing(&app.header, kind, opts[i]) {
                         Some(id) => app.message = format!("the {} ({}) is already built (element {id}); ⌫ removes it", kind.info().name_in_text(), opts[i].name()),
-                        None => start_add(app, kind, opts[i]),
+                        None => add_or_wait(app, kind, opts[i]),
                     },
                     _ => {}
                 },
                 Mode::Normal => match k.code {
                     KeyCode::Char('q') | KeyCode::Esc => {
                         if app.job.is_some() {
-                            app.message = "wait until the running task has finished".into();
+                            app.message = if app.waiting.is_empty() { "wait until the running task has finished".into() } else { "wait until the running and the waiting tasks have finished".into() };
                         } else {
                             return Ok(());
                         }
@@ -425,8 +458,6 @@ mod tui {
                         let Some(r) = app.selected().cloned() else { continue };
                         if r.base {
                             app.message = format!("{} is part of the database", r.kind.info().name);
-                        } else if app.job.is_some() {
-                            app.message = "another task is running".into();
                         } else {
                             let opts = indexes::supported(r.kind).to_vec();
                             if opts.is_empty() {
@@ -434,7 +465,7 @@ mod tui {
                             } else if opts.len() == 1 || k.code != KeyCode::Char('t') {
                                 match indexes::existing(&app.header, r.kind, opts[0]) {
                                     Some(id) => app.message = format!("the {} is already built (element {id}); ⌫ removes it", r.kind.info().name_in_text()),
-                                    None => start_add(app, r.kind, opts[0]),
+                                    None => add_or_wait(app, r.kind, opts[0]),
                                 }
                             } else {
                                 app.mode = Mode::Time(r.kind, opts, 0);
@@ -461,6 +492,19 @@ mod tui {
                     _ => {}
                 },
             }
+        }
+    }
+
+    /// Builds the index now, or after the running task (and those waiting before it).
+    fn add_or_wait(app: &mut App, kind: ElementKind, t: Temporal) {
+        let running = app.job.as_ref().is_some_and(|j| j.kind == Some(kind));
+        if running || app.waiting.contains(&(kind, t)) {
+            app.message = format!("the {} is already on its way", kind.info().name_in_text());
+        } else if app.job.is_some() {
+            app.waiting.push_back((kind, t));
+            app.message = format!("the {} waits until the running task has finished", kind.info().name_in_text());
+        } else {
+            start_add(app, kind, t);
         }
     }
 
@@ -512,8 +556,10 @@ mod tui {
                 index_of.push(None);
             }
             let progress = (job_kind == Some(r.kind) && !r.built()).then(|| app.job.as_ref().unwrap().progress.get());
+            let waiting = !r.built() && progress.is_none() && app.waiting.iter().any(|(k, _)| *k == r.kind);
             let style = if r.built() { Style::default().add_modifier(Modifier::BOLD) } else { Style::default().add_modifier(Modifier::DIM) };
-            items.push(ListItem::new(Line::from(Span::styled(row_text(r, progress), style))));
+            let text = if waiting { row_text_waiting(r) } else { row_text(r, progress) };
+            items.push(ListItem::new(Line::from(Span::styled(text, style))));
             index_of.push(Some(i));
         }
         // map the selected row to the list position (the separator line is not selectable)
