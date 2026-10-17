@@ -108,13 +108,38 @@ pub fn reverse(ctx: &Ctx, p: P, one: bool) -> R<Value> {
 /// Cells in which boundaries are looked up: a tenth of a degree.
 const CELL_DEG: f64 = 0.1;
 
+/// The administrative areas found so far, per database (they are those at its end, so they
+/// do not change): kept for the process, as a server answers many queries on one database,
+/// and assembling a boundary (a country, a state) takes up to half a second.
+#[derive(Default)]
+struct Admins {
+    /// by (admin level, cell)
+    cells: std::collections::HashMap<(u32, i32, i32), Arc<Vec<Arc<Admin>>>>,
+    /// by relation id
+    areas: std::collections::HashMap<i64, Arc<Admin>>,
+}
+
+fn admins<T>(ctx: &Ctx, f: impl FnOnce(&mut Admins) -> T) -> R<T> {
+    static ALL: std::sync::Mutex<Vec<(std::path::PathBuf, i64, Admins)>> = std::sync::Mutex::new(Vec::new());
+    let db = ctx.db()?;
+    let mut all = lock(&ALL);
+    let i = match all.iter().position(|x| x.0 == db.path && x.1 == db.latest) {
+        Some(i) => i,
+        None => {
+            all.push((db.path.clone(), db.latest, Admins::default()));
+            all.len() - 1
+        }
+    };
+    Ok(f(&mut all[i].2))
+}
+
 /// The administrative areas of one level that may contain points of the cell around `p`:
 /// a scan of the boundary relations in the cell (the database is spatially indexed), each
-/// boundary assembled once per run. Cached per cell and level.
+/// boundary assembled once. Cached per cell and level.
 fn admins_near(ctx: &Ctx, level: u32, p: P) -> R<Arc<Vec<Arc<Admin>>>> {
     let cell = ((p.0 / CELL_DEG).floor() as i32, (p.1 / CELL_DEG).floor() as i32);
-    if let Some(a) = lock(&ctx.caches.admin_cells).get(&(level, cell.0, cell.1)) {
-        return Ok(a.clone());
+    if let Some(a) = admins(ctx, |a| a.cells.get(&(level, cell.0, cell.1)).cloned())? {
+        return Ok(a);
     }
     let db = ctx.db()?;
     let bbox = BBoxF { minx: cell.0 as f64 * CELL_DEG, maxx: (cell.0 + 1) as f64 * CELL_DEG, miny: cell.1 as f64 * CELL_DEG, maxy: (cell.1 + 1) as f64 * CELL_DEG };
@@ -136,20 +161,20 @@ fn admins_near(ctx: &Ctx, level: u32, p: P) -> R<Arc<Vec<Arc<Admin>>>> {
     })?;
     let mut out = Vec::new();
     for e in parts.into_iter().flatten() {
-        let a = admin(ctx, &e, level);
+        let a = admin(ctx, &e, level)?;
         if !a.bbox.is_empty() && a.bbox.intersects(&bbox) || a.bbox.is_empty() && level == 2 {
             out.push(a);
         }
     }
     let out = Arc::new(out);
-    lock(&ctx.caches.admin_cells).insert((level, cell.0, cell.1), out.clone());
+    admins(ctx, |a| a.cells.insert((level, cell.0, cell.1), out.clone()))?;
     Ok(out)
 }
 
-/// A boundary relation as an administrative area (assembled once per run).
-fn admin(ctx: &Ctx, e: &Elem, level: u32) -> Arc<Admin> {
-    if let Some(a) = lock(&ctx.caches.admin_areas).get(&e.id) {
-        return a.clone();
+/// A boundary relation as an administrative area (assembled once).
+fn admin(ctx: &Ctx, e: &Elem, level: u32) -> R<Arc<Admin>> {
+    if let Some(a) = admins(ctx, |a| a.areas.get(&e.id).cloned())? {
+        return Ok(a);
     }
     // the boundary relation as an area (its outer and inner rings); one cut off by the extract
     // keeps its name and code
@@ -159,8 +184,8 @@ fn admin(ctx: &Ctx, e: &Elem, level: u32) -> Arc<Admin> {
     let bbox = region.bbox();
     let iso = e.tag(if level == 2 { "ISO3166-1:alpha2" } else { "ISO3166-2" }).or_else(|| if level == 2 { e.tag("ISO3166-1") } else { None }).cloned();
     let a = Arc::new(Admin { name: e.tag("name").cloned(), iso, region, bbox });
-    lock(&ctx.caches.admin_areas).insert(e.id, a.clone());
-    a
+    admins(ctx, |x| x.areas.insert(e.id, a.clone()))?;
+    Ok(a)
 }
 
 /// The administrative area of a level around a point.
