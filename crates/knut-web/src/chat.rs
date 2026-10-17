@@ -68,7 +68,8 @@ impl Model for HttpModel {
         let body = json!({
             "model": self.model,
             "messages": messages.iter().map(|(r, c)| json!({ "role": r, "content": c })).collect::<Vec<_>>(),
-            "temperature": 0.2,
+            // the most likely reply: the same question gives the same query
+            "temperature": 0.0,
             "max_tokens": max_tokens,
             "stream": false,
         });

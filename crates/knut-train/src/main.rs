@@ -180,12 +180,19 @@ fn context(d: &Database, conf: &'static vocab::DbConf, tags: Arc<Vec<vocab::Tag>
         .names(&format!("(nodes n with n:railway=station and n:name within {city}).map(n => n:name)"))
         .iter()
         .take(40)
-        .map(|n| Start::station(n, conf.city))
+        .flat_map(|n| Start::station(n, conf.city))
         .collect();
-    starts.extend(d.names(&format!("(* x with x:tourism=museum and x:name within {city}).map(x => x:name)")).iter().take(30).map(|n| Start::named(n)));
+    starts.extend(d.names(&format!("(* x with x:tourism=museum and x:name within {city}).map(x => x:name)")).iter().take(30).flat_map(|n| Start::named(n, conf.city)));
+    // named objects whose names sound like a kind of thing
+    let mut named: Vec<String> = Vec::new();
+    for tag in ["amenity=school", "amenity=library", "tourism=museum", "leisure=park", "amenity=hospital", "amenity=theatre", "leisure=sports_centre", "amenity=kindergarten"] {
+        let mut ns = d.names(&format!("(* x with x:{tag} and x:name within {city}).map(x => x:name)"));
+        ns.retain(|n| !n.contains('\'') && n.contains(' ') && !named.contains(n));
+        named.extend(ns.into_iter().take(15));
+    }
     let addresses = addresses(d);
     eprintln!("  {} districts, {} places, {} starts, {} addresses", districts.len(), places.len(), starts.len(), addresses.len());
-    Ctx { conf, tags, addresses, districts, places, starts, first_year: year_of(d.db.earliest), last_year: year_of(d.db.latest) }
+    Ctx { conf, tags, addresses, districts, places, starts, named, first_year: year_of(d.db.earliest), last_year: year_of(d.db.latest) }
 }
 
 // ── generating ──
@@ -301,6 +308,45 @@ fn corruptions(q: &str, rng: &mut Rng) -> Vec<String> {
         picked.push(out.swap_remove(rng.below(out.len())));
     }
     picked
+}
+
+/// The place of a query (`within 'Name'` or `within Name`) misspelt, in the query and in the
+/// question that names it: a letter in its middle left out.
+fn misspell_place(q: &str, question: &str, rng: &mut Rng) -> Option<(String, String)> {
+    let i = q.find(" within ")? + " within ".len();
+    let rest = &q[i..];
+    let (name, quoted) = match rest.strip_prefix('\'') {
+        Some(r) => (&r[..r.find('\'')?], true),
+        None => (&rest[..rest.find(|c: char| !c.is_alphanumeric() && c != '-').unwrap_or(rest.len())], false),
+    };
+    let chars: Vec<char> = name.chars().collect();
+    if chars.len() < 6 || !question.contains(name) {
+        return None;
+    }
+    let k = 1 + rng.below(chars.len() - 2);
+    if !chars[k].is_alphabetic() || chars[k] == chars[k - 1] {
+        return None;
+    }
+    let bad: String = chars.iter().enumerate().filter(|&(j, _)| j != k).map(|(_, c)| c).collect();
+    let start = i + usize::from(quoted);
+    let query = format!("{}{bad}{}", &q[..start], &q[start + name.len()..]);
+    Some((question.replacen(name, &bad, 1), query))
+}
+
+/// The question back about an unknown place, in the language of the question.
+fn spelling_question(error: &str, lang: templates::Lang) -> Option<String> {
+    let en = chat::unknown_place(error)?;
+    Some(match lang {
+        templates::Lang::En => en,
+        templates::Lang::De => {
+            let name = en.strip_prefix("The place ")?.split(" could not be found.").next()?.to_string();
+            let mut de = format!("Der Ort {name} wurde nicht gefunden. Stimmt die Schreibweise?");
+            if let Some(s) = en.split(" Did you mean ").nth(1) {
+                de.push_str(&format!(" Meintest du {s}"));
+            }
+            de
+        }
+    })
 }
 
 /// A letter without its accent (ä → a, ß → s).
@@ -427,6 +473,24 @@ fn generate(args: &[String]) -> Result<(), String> {
                     samples.push((format!("{}/correction", k.item.template), messages(&system, &turns, &reply)));
                     *counts.entry("correction".into()).or_default() += 1;
                     break;
+                }
+            }
+            // a place misspelt in the question: the run fails, and knut asks about the spelling
+            if rng.chance(0.12)
+                && let Some((bad_question, bad)) = misspell_place(good, &question, &mut rng)
+            {
+                let r = d.run(&bad, 10);
+                if r.code != 0 && r.outputs.is_empty() && !r.cancelled
+                    && let Some(ask) = spelling_question(&r.messages, k.item.lang)
+                {
+                    let mut turns = k.item.turns.clone();
+                    if let Some(last) = turns.last_mut() {
+                        last.1 = bad_question;
+                    }
+                    turns.push(("assistant".into(), format!("QUERY:\n{bad}")));
+                    turns.push(("user".into(), chat::correction_message(&[r.messages.clone()])));
+                    samples.push((format!("{}/spelling", k.item.template), messages(&system, &turns, &reply_text(&Reply::Ask(ask)))));
+                    *counts.entry("spelling".into()).or_default() += 1;
                 }
             }
             if let (Some(results), Some(answer)) = (&k.results, &k.answer)
@@ -661,6 +725,27 @@ mod tests {
         assert_eq!(templates::region("Vegesack"), "Vegesack");
         assert_eq!(templates::region("Horn-Lehe"), "'Horn-Lehe'");
         assert_eq!(templates::region("Östliche Vorstadt"), "'Östliche Vorstadt'");
+    }
+
+    #[test]
+    fn a_misspelt_place_is_left_out_a_letter() {
+        let mut rng = Rng::new(3);
+        let (mut n, mut seen) = (0, false);
+        while n < 50 {
+            n += 1;
+            if let Some((question, query)) = misspell_place("count of * x with x:amenity=bench within 'Horn-Lehe'", "How many benches are there in Horn-Lehe?", &mut rng) {
+                let name = query.split('\'').nth(1).unwrap().to_string();
+                assert_eq!(name.chars().count(), 8);
+                assert!(question.contains(&name) && !question.contains("Horn-Lehe"));
+                seen = true;
+            }
+        }
+        assert!(seen);
+        assert!(misspell_place("count of * x with x:amenity=bench within Vegesack", "Benches?", &mut rng).is_none());
+        assert_eq!(
+            spelling_question("Error [E210]:  No region called \"Hor-Lehe\" is known.\n  Did you mean:\n    within 'horn-lehe'", templates::Lang::De).unwrap(),
+            "Der Ort Hor-Lehe wurde nicht gefunden. Stimmt die Schreibweise? Meintest du Horn-Lehe?"
+        );
     }
 
     #[test]

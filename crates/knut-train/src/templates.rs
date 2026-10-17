@@ -57,18 +57,38 @@ pub struct Start {
 impl Start {
     /// A railway station: the questions say so ("Bremen-Burg station", "Bahnhof Bremen-Burg");
     /// the main station of the city of the database is also "the main station".
-    pub fn station(name: &str, city: &str) -> Start {
+    /// A station; the main station also as people call it ("Bremen Central Station", "Bremen
+    /// Hbf", "Hauptbahnhof Bremen", …), always found by its name in the data.
+    pub fn station(name: &str, city: &str) -> Vec<Start> {
         let pick = format!("pick node n with n:railway=station and n:name='{name}'");
-        if name == format!("{city} Hauptbahnhof") || name == format!("{city} Hbf") {
-            Start { name: name.into(), pick, en: "the main station".into(), de_von: "vom Hauptbahnhof".into(), de_bis: "bis zum Hauptbahnhof".into() }
-        } else {
-            Start { name: name.into(), pick, en: format!("{name} station"), de_von: format!("vom Bahnhof {name}"), de_bis: format!("bis zum Bahnhof {name}") }
+        let s = |en: String, von: String, bis: String| Start { name: name.into(), pick: pick.clone(), en, de_von: von, de_bis: bis };
+        let main = [format!("{city} Hauptbahnhof"), format!("{city} Hbf"), format!("{city} Centralstation"), format!("{city} Central")].contains(&name.to_string());
+        if !main {
+            return vec![s(format!("{name} station"), format!("vom Bahnhof {name}"), format!("bis zum Bahnhof {name}"))];
         }
+        vec![
+            s("the main station".into(), "vom Hauptbahnhof".into(), "bis zum Hauptbahnhof".into()),
+            s(format!("{city} Central Station"), format!("vom {city} Hbf"), format!("bis zum {city} Hbf")),
+            s(format!("{city} central station"), format!("vom Hauptbahnhof {city}"), format!("bis zum Hauptbahnhof {city}")),
+            s(format!("{city} main station"), format!("vom {city} Hauptbahnhof"), format!("bis zum {city} Hauptbahnhof")),
+            s(format!("{city} Hbf"), format!("vom Hbf {city}"), format!("bis zum Hbf {city}")),
+            s(format!("the central station of {city}"), format!("vom Hauptbahnhof in {city}"), format!("bis zum Hauptbahnhof in {city}")),
+        ]
     }
 
-    /// A place known by its name only (a museum, …): found by the name.
-    pub fn named(name: &str) -> Start {
-        Start { name: name.into(), pick: format!("pick * x with x:name='{name}'"), en: name.into(), de_von: format!("von {name}"), de_bis: format!("bis {name}") }
+    /// A place known by its name only (a museum, …): found by the name; also "… in TOWN",
+    /// found by the name within the town.
+    pub fn named(name: &str, city: &str) -> Vec<Start> {
+        vec![
+            Start { name: name.into(), pick: format!("pick * x with x:name='{name}'"), en: name.into(), de_von: format!("von {name}"), de_bis: format!("bis {name}") },
+            Start {
+                name: name.into(),
+                pick: format!("pick * x with x:name='{name}' within {}", region(city)),
+                en: format!("{name} in {city}"),
+                de_von: format!("von {name} in {city}"),
+                de_bis: format!("bis {name} in {city}"),
+            },
+        ]
     }
 }
 
@@ -87,9 +107,10 @@ impl Addr {
     /// As people write it: `Am Wall 201, Bremen`, sometimes with the postcode or without the
     /// comma.
     fn text(&self, rng: &mut Rng) -> String {
-        match rng.below(4) {
+        match rng.below(5) {
             0 if !self.postcode.is_empty() => format!("{} {}, {} {}", self.street, self.number, self.postcode, self.city),
             1 => format!("{} {} {}", self.street, self.number, self.city),
+            2 => format!("{} {} in {}", self.street, self.number, self.city),
             _ => format!("{} {}, {}", self.street, self.number, self.city),
         }
     }
@@ -104,6 +125,9 @@ pub struct Ctx {
     /// Districts, towns and the city.
     pub places: Vec<String>,
     pub starts: Vec<Start>,
+    /// Named objects in the city whose names sound like a kind of thing ("Gymnasium
+    /// Petrinum", "Rhododendron-Park"): asked for by their names.
+    pub named: Vec<String>,
     pub first_year: i32,
     pub last_year: i32,
 }
@@ -357,6 +381,9 @@ pub const TEMPLATES: &[(&str, usize, Template)] = &[
     ("count_all", 4, count_all),
     ("count_place", 10, count_place),
     ("show_place", 6, show_place),
+    ("pick_one", 3, pick_one),
+    ("named_where", 4, named_where),
+    ("per_area", 3, per_area),
     ("which_place", 8, which_place),
     ("trend", 5, trend),
     ("over_the_years", 4, over_the_years),
@@ -521,6 +548,102 @@ fn show_place(g: &mut Gen) -> Option<Item> {
         Box::new(move |o, _| {
             let n = n_set(o.first()?)?;
             (n >= 2).then(|| says(lang, format!("The map shows {n} {p} in {place}."), format!("Die Karte zeigt {n} {p} in {place}.")))
+        }),
+    ))
+}
+
+/// "How many benches are there per park in Vegesack?": counted per area of a kind.
+fn per_area(g: &mut Gen) -> Option<Item> {
+    let t = g.thing_from(THINGS, &|t| t.kind == crate::vocab::Kind::Nodes);
+    let place = g.place()?;
+    let lang = g.lang();
+    let (cond, en_sg, de_sg, en_pl, de_pl) = *g.rng.pick(&[
+        ("d:leisure=park", "park", "Park", "parks", "Parks"),
+        ("d:leisure=playground", "playground", "Spielplatz", "playgrounds", "Spielplätze"),
+        ("d:landuse=cemetery", "cemetery", "Friedhof", "cemeteries", "Friedhöfe"),
+        ("d:amenity=school", "school", "Schule", "schools", "Schulen"),
+    ]);
+    let q = g.phrase(
+        lang,
+        &["How many {pl} are there per {a} in {P}?", "Number of {pl} per {a} in {P}", "{pl} per {a} in {P}", "How many {pl} does each {a} in {P} have?"],
+        &["Wie viele {pl} gibt es pro {a} in {P}?", "Anzahl der {pl} je {a} in {P}", "{pl} pro {a} in {P}", "Wie viele {pl} hat jeder {a} in {P}?"],
+        &[("pl", pl(t, lang)), ("a", if lang == Lang::En { en_sg } else { de_sg }), ("P", &place)],
+    );
+    let (p, areas) = (pl(t, lang), if lang == Lang::En { en_pl } else { de_pl });
+    Some(Item::query(
+        "per_area",
+        lang,
+        q,
+        format!("count of {} per (areas d with {cond} within {})", t.sel(), region(&place)),
+        Box::new(move |o, _| {
+            let gs = groups(o.first()?);
+            let (name, n) = gs.iter().max_by_key(|g| g.1)?;
+            (*n >= 2).then(|| {
+                says(lang, format!("Of the {areas} in {place}, {name} has the most {p} ({n})."), format!("Von den {areas} in {place} hat {name} die meisten {p} ({n})."))
+            })
+        }),
+    ))
+}
+
+/// "Where is Gymnasium Petrinum in Dorsten?": an object by its name (not the kind of thing
+/// its name sounds like), within the town if one is named.
+fn named_where(g: &mut Gen) -> Option<Item> {
+    let name = g.names(&g.ctx.named.clone())?;
+    let city = g.ctx.conf.city.to_string();
+    let lang = g.lang();
+    let in_town = g.rng.chance(0.8);
+    let q = if in_town {
+        g.phrase(
+            lang,
+            &["Where is {N} in {P}?", "Where is \"{N}\" in {P}?", "Show me {N} in {P}.", "Where can I find {N} in {P}?", "{N} in {P}"],
+            &["Wo ist {N} in {P}?", "Wo ist \"{N}\" in {P}?", "Zeig mir {N} in {P}.", "Wo finde ich {N} in {P}?", "{N} in {P}"],
+            &[("N", &name), ("P", &city)],
+        )
+    } else {
+        g.phrase(lang, &["Where is {N}?", "Show me \"{N}\" on the map."], &["Wo liegt {N}?", "Zeig mir \"{N}\" auf der Karte."], &[("N", &name)])
+    };
+    let query = if in_town { format!("* x with x:name='{name}' within {}", region(&city)) } else { format!("* x with x:name='{name}'") };
+    Some(Item::query(
+        "named_where",
+        lang,
+        q,
+        query,
+        Box::new(move |o, _| {
+            (n_set(o.first()?)? >= 1).then(|| says(lang, format!("The map shows {name}."), format!("Die Karte zeigt {name}.")))
+        }),
+    ))
+}
+
+/// "Provide exactly one library in Bremen", "Pick a bakery in Findorff": `pick`.
+fn pick_one(g: &mut Gen) -> Option<Item> {
+    let t = g.thing();
+    let place = g.place()?;
+    let lang = g.lang();
+    let a = if t.en[0].starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+    let (ein, eine) = match t.g {
+        crate::vocab::Gender::M => ("einen", "ein"),
+        crate::vocab::Gender::F => ("eine", "eine"),
+        crate::vocab::Gender::N => ("ein", "ein"),
+    };
+    let q = g.phrase(
+        lang,
+        &["Provide exactly one {sg} in {P}.", "Pick {a} {sg} in {P}.", "Show me one {sg} in {P}.", "Give me a single {sg} in {P}.", "just one {sg} in {P}", "any {sg} in {P}, one is enough"],
+        &["Zeige mir genau {ein} {sg} in {P}.", "Such {ein} {sg} in {P} aus.", "Nenne mir {ein} {sg} in {P}.", "nur {ein} {sg} in {P}"],
+        &[("sg", sg(t, lang)), ("P", &place), ("a", a), ("ein", ein)],
+    );
+    let s = sg(t, lang);
+    Some(Item::query(
+        "pick_one",
+        lang,
+        q,
+        format!("pick {} within {}", t.sel(), region(&place)),
+        Box::new(move |o, _| {
+            let v = &o.first()?.value;
+            let name = v["tags"]["name"].as_str();
+            Some(match name {
+                Some(n) => says(lang, format!("Here is one {s} in {place}: {n}."), format!("Hier ist {eine} {s} in {place}: {n}.")),
+                None => says(lang, format!("The map shows one {s} in {place}."), format!("Die Karte zeigt {eine} {s} in {place}.")),
+            })
         }),
     ))
 }
@@ -1830,14 +1953,15 @@ fn compare_things(g: &mut Gen) -> Option<Item> {
         )
     };
     let r = region(&place);
-    let query = if numbers { format!("count of {} within {r}, count of {} within {r}", a.sel(), b.sel()) } else { format!("{} within {r}, {} within {r}", a.sel(), b.sel()) };
+    // both on the map, in two colours (also when the numbers are asked for: the answer says them)
+    let query = format!("{} within {r}\n{} within {r}", a.sel(), b.sel());
     let mut it = Item::query(
         "compare_things",
         lang,
         q,
         query,
         Box::new(move |o, _| {
-            let (x, y) = if numbers { (int(o.first()?)? as usize, int(o.get(1)?)? as usize) } else { (n_set(o.first()?)?, n_set(o.get(1)?)?) };
+            let (x, y) = (n_set(o.first()?)?, n_set(o.get(1)?)?);
             Some(if numbers {
                 says(lang, format!("In {place} there are {x} {pa} and {y} {pb}."), format!("In {place} gibt es {x} {pa} und {y} {pb}."))
             } else {
