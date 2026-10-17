@@ -119,8 +119,17 @@ struct Admins {
     areas: std::collections::HashMap<i64, Arc<Admin>>,
 }
 
+static ALL: std::sync::Mutex<Vec<(std::path::PathBuf, i64, Admins)>> = std::sync::Mutex::new(Vec::new());
+
+/// Drops the administrative areas kept (when memory runs short); returns whether there were any.
+pub fn forget() -> bool {
+    let mut all = lock(&ALL);
+    let any = !all.is_empty();
+    all.clear();
+    any
+}
+
 fn admins<T>(ctx: &Ctx, f: impl FnOnce(&mut Admins) -> T) -> R<T> {
-    static ALL: std::sync::Mutex<Vec<(std::path::PathBuf, i64, Admins)>> = std::sync::Mutex::new(Vec::new());
     let db = ctx.db()?;
     let mut all = lock(&ALL);
     let i = match all.iter().position(|x| x.0 == db.path && x.1 == db.latest) {

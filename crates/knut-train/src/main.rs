@@ -101,11 +101,7 @@ impl Database {
         let db = Arc::new(Db::open(&path)?);
         // many queries in one process: what they will need is loaded ahead (--minimal,
         // --preload: the default, --preload-all)
-        knut_exec::load::load(&db, load_mode(), |s| {
-            if s.seconds > 0.5 {
-                eprintln!("  loaded {} ({:.1} s)", s.name, s.seconds);
-            }
-        });
+        knut_exec::load::load(&db, load_mode(), |s| eprintln!("{}", knut_exec::load::format_step(s)));
         let description = chat::database_description(Some(&path), Some(&db));
         Ok(Database { path, db, description })
     }

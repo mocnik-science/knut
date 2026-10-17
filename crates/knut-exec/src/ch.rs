@@ -2026,9 +2026,18 @@ fn decode_cch(sections: &[&[u8]], n: usize) -> Option<Vec<(usize, Hierarchy)>> {
 type Loaded = [Option<Arc<(Hierarchy, Vec<u32>)>>; 3];
 
 /// The hierarchies of an element of the database, loaded once (and only when asked for).
+static CACHE: std::sync::Mutex<Vec<(std::path::PathBuf, u64, Arc<Loaded>)>> = std::sync::Mutex::new(Vec::new());
+
+/// Drops the hierarchies kept (when memory runs short); returns whether there were any.
+pub fn forget() -> bool {
+    let Ok(mut c) = CACHE.lock() else { return false };
+    let any = !c.is_empty();
+    c.clear();
+    any
+}
+
 fn load_kind(db: &Db, net: &RoutingNet, kind: knut_format::container::ElementKind) -> Option<Arc<Loaded>> {
     use knut_format::container::ElementKind;
-    static CACHE: std::sync::Mutex<Vec<(std::path::PathBuf, u64, Arc<Loaded>)>> = std::sync::Mutex::new(Vec::new());
     let el = db.reader.element(kind)?;
     // built on another routing network (its junctions may be numbered differently): unusable
     if el.params.iter().any(|p| p.0 == "network" && p.1 != crate::indexes::network_checksum(&db.reader)) {

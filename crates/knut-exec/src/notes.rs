@@ -174,6 +174,14 @@ pub fn exists(db_path: &Path) -> bool {
 /// Notes indexes read so far, by file (and its size and time): kept for the process.
 static SHARED: std::sync::Mutex<Vec<(std::path::PathBuf, (u64, Option<std::time::SystemTime>), Arc<NotesIndex>)>> = std::sync::Mutex::new(Vec::new());
 
+/// Drops the notes indexes kept (when memory runs short); returns whether there were any.
+pub fn forget() -> bool {
+    let mut all = lock(&SHARED);
+    let any = !all.is_empty();
+    all.clear();
+    any
+}
+
 /// The notes index next to the database, read once per process; `None` if there is none.
 pub fn shared(db: &crate::db::Db) -> Option<Arc<NotesIndex>> {
     let path = sidecar(&db.path, "notes");

@@ -1068,6 +1068,20 @@ pub fn isochrone_raster(db: &Db, net: &RoutingNet, from: &Snap, dist: &[f64], re
 /// The routing network of a database, loaded once.
 static NETS: std::sync::Mutex<Vec<(std::path::PathBuf, u64, Arc<RoutingNet>)>> = std::sync::Mutex::new(Vec::new());
 
+/// Drops the networks kept, with their connected parts and attached points (when memory runs
+/// short); returns whether there were any.
+pub fn forget() -> bool {
+    let any = NETS.lock().map(|mut n| {
+        let any = !n.is_empty();
+        n.clear();
+        any
+    });
+    if let Ok(mut s) = SNAPS.lock() {
+        s.clear();
+    }
+    any.unwrap_or(false)
+}
+
 /// The stored network if it is already in memory (without loading it).
 pub fn loaded(db: &Db) -> Option<Arc<RoutingNet>> {
     let el = db.reader.element(knut_format::container::ElementKind::RoutingNetwork)?;

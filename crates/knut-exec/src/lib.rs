@@ -543,6 +543,10 @@ pub struct Collected {
 /// Runs a script and collects its outputs as text, JSON and GeoJSON (for `knut web`).
 /// `max_features` limits the features per output.
 pub fn run_collect(src: &str, file: Option<&str>, base_dir: &Path, opts: &Options, max_features: usize) -> Collected {
+    // a long-running process: if memory runs short, what is needed least is dropped first
+    for s in load::trim(opts.shared_db.as_deref()) {
+        eprintln!("{}", load::format_step(&s));
+    }
     let mut outputs = Vec::new();
     let mut err = Vec::new();
     let limit = opts.limit;

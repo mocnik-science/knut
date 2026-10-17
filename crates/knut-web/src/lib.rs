@@ -180,7 +180,7 @@ pub fn serve(opts: WebOptions) -> Result<(), String> {
             knut_exec::load::Mode::Preload => "preload",
             knut_exec::load::Mode::PreloadAll => "preload-all",
         });
-        knut_exec::load::load(&db, opts.load, |s| report_step(s));
+        knut_exec::load::load(&db, opts.load, |s| eprintln!("{}", knut_exec::load::format_step(s)));
         eprintln!("ready ({:.1} s)", t.elapsed().as_secs_f64());
     }
     for req in server.incoming_requests() {
@@ -368,15 +368,6 @@ fn handle(st: &State, mut req: Request) {
             }
         }
         _ => send(req, 404, "text/plain; charset=utf-8", "not found".into()),
-    }
-}
-
-/// One line per part loaded ahead (or left to the queries).
-pub fn report_step(s: &knut_exec::load::Step) {
-    let size = if s.bytes >= 1 << 30 { format!("{:.1} GB", s.bytes as f64 / 1e9) } else { format!("{} MB", s.bytes.div_ceil(1 << 20)) };
-    match &s.skipped {
-        None => eprintln!("  [{}] {} ({size}, {:.2} s)", s.category.letter(), s.name, s.seconds),
-        Some(why) => eprintln!("  [{}] {} ({size}): {why}", s.category.letter(), s.name),
     }
 }
 

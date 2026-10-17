@@ -236,6 +236,14 @@ fn remember(db: &Db, ix: Arc<CsIndex>) -> Arc<CsIndex> {
     ix
 }
 
+/// Drops the changeset indexes kept (when memory runs short); returns whether there were any.
+pub fn forget() -> bool {
+    let mut all = lock(&SHARED);
+    let any = !all.is_empty();
+    all.clear();
+    any
+}
+
 /// The stored changeset index (container element or side file), decoded once per process;
 /// `None` if there is none.
 pub fn shared(db: &Db) -> Option<Arc<CsIndex>> {

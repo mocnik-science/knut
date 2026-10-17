@@ -41,6 +41,14 @@ fn admin_level(e: &Elem) -> u32 {
 type Found = std::collections::HashMap<String, Value>;
 static FOUND: Mutex<Vec<(std::path::PathBuf, i64, Found)>> = Mutex::new(Vec::new());
 
+/// Drops the regions kept (when memory runs short); returns whether there were any.
+pub fn forget() -> bool {
+    let mut all = lock(&FOUND);
+    let any = !all.is_empty();
+    all.clear();
+    any
+}
+
 /// The region for a place name (cached for the run, and found regions for the process).
 pub fn region_value(ctx: &Ctx, name: &str, span: Span) -> R<Value> {
     if let Some(v) = lock(&ctx.caches.places).get(name) {
