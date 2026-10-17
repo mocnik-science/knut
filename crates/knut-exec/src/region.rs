@@ -179,7 +179,7 @@ impl Raster {
 pub enum Region {
     World,
     Box(BBoxF),
-    Geom { geom: Arc<Geom>, bbox: BBoxF, label: String },
+    Geom { geom: Arc<Geom>, bbox: BBoxF, label: String, prep: std::sync::OnceLock<Option<Prepared>> },
     Raster(Raster),
     Union(Union),
 }
@@ -263,7 +263,7 @@ fn cell_range(b: &BBoxF, cell: f64) -> (i32, i32, i32, i32) {
 impl Region {
     pub fn from_geom(g: Arc<Geom>, label: String) -> Region {
         let bbox = g.bbox();
-        Region::Geom { geom: g, bbox, label }
+        Region::Geom { geom: g, bbox, label, prep: Default::default() }
     }
 
     pub fn bbox(&self) -> BBoxF {
@@ -290,7 +290,13 @@ impl Region {
         match self {
             Region::World => true,
             Region::Box(b) => b.contains(p),
-            Region::Geom { geom, bbox, .. } => bbox.contains(p) && geom.contains_point(p),
+            Region::Geom { geom, bbox, prep, .. } => {
+                bbox.contains(p)
+                    && match prepared(geom, prep) {
+                        Some(pr) => pr.contains(p),
+                        None => geom.contains_point(p),
+                    }
+            }
             Region::Raster(r) => r.bbox.contains(p) && r.contains(p),
             Region::Union(u) => {
                 u.bbox.contains(p) && u.near(&BBoxF { minx: p.0, miny: p.1, maxx: p.0, maxy: p.1 }).iter().any(|&i| u.parts[i as usize].contains(p))
@@ -314,9 +320,12 @@ impl Region {
                     Cover::Outside
                 }
             }
-            Region::Geom { geom, bbox, .. } => {
+            Region::Geom { geom, bbox, prep, .. } => {
                 if !bbox.intersects(b) {
                     return Cover::Outside;
+                }
+                if let Some(pr) = prepared(geom, prep) {
+                    return pr.cover(b);
                 }
                 let corners = [(b.minx, b.miny), (b.maxx, b.miny), (b.maxx, b.maxy), (b.minx, b.maxy)];
                 let inside = corners.iter().filter(|c| geom.contains_point(**c)).count();
@@ -400,6 +409,211 @@ impl Region {
     }
 }
 
+/// The prepared form of a region with many corners, made on first use (small ones are tested
+/// directly).
+fn prepared<'a>(g: &Geom, prep: &'a std::sync::OnceLock<Option<Prepared>>) -> Option<&'a Prepared> {
+    prep.get_or_init(|| Prepared::new(g)).as_ref()
+}
+
+/// A polygon prepared for many tests: a grid over its box whose cells are inside, outside or
+/// on the boundary; boundary cells keep the edges that may pass through them, and each row the
+/// edges that reach into it. A point in an inside or outside cell is answered at once; else
+/// only the edges of its row to its right are counted (the same rule as `geom::ring_contains`).
+/// A box is answered from its cells, with the edges of its boundary cells tested against it.
+pub struct Prepared {
+    bbox: BBoxF,
+    nx: usize,
+    ny: usize,
+    cw: f64,
+    ch: f64,
+    /// 0 outside, 1 inside, 2 boundary
+    state: Vec<u8>,
+    cells: Vec<Vec<u32>>,
+    /// per row: edges reaching into it, the largest x first
+    rows: Vec<Vec<u32>>,
+    edges: Vec<(P, P, u32)>,
+    polys: usize,
+}
+
+impl std::fmt::Debug for Prepared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Prepared({}×{} cells, {} edges)", self.nx, self.ny, self.edges.len())
+    }
+}
+
+impl Prepared {
+    fn new(g: &Geom) -> Option<Prepared> {
+        let polys = g.polygons();
+        let mut edges: Vec<(P, P, u32)> = Vec::new();
+        for (k, poly) in polys.iter().enumerate() {
+            for ring in std::iter::once(&poly.outer).chain(poly.holes.iter()) {
+                let n = ring.len();
+                for i in 0..n {
+                    let (a, b) = (ring[if i == 0 { n - 1 } else { i - 1 }], ring[i]);
+                    if a != b {
+                        edges.push((a, b, k as u32));
+                    }
+                }
+            }
+        }
+        // few corners: testing them directly is as fast
+        if edges.len() < 64 {
+            return None;
+        }
+        let bbox = g.bbox();
+        let (w, h) = ((bbox.maxx - bbox.minx).max(1e-9), (bbox.maxy - bbox.miny).max(1e-9));
+        let target = (edges.len() as f64).clamp(256.0, 262_144.0);
+        let nx = ((target * w / h).sqrt().round() as usize).clamp(1, 1024);
+        let ny = ((target / nx as f64).round() as usize).clamp(1, 1024);
+        let (cw, ch) = (w / nx as f64, h / ny as f64);
+        let mut pr = Prepared { bbox, nx, ny, cw, ch, state: vec![0; nx * ny], cells: vec![Vec::new(); nx * ny], rows: vec![Vec::new(); ny], edges, polys: polys.len() };
+        for (i, &(a, b, _)) in pr.edges.iter().enumerate() {
+            let (x0, x1) = (pr.col(a.0.min(b.0)), pr.col(a.0.max(b.0)));
+            let (y0, y1) = (pr.row(a.1.min(b.1)), pr.row(a.1.max(b.1)));
+            for y in y0..=y1 {
+                pr.rows[y].push(i as u32);
+                for x in x0..=x1 {
+                    pr.cells[y * nx + x].push(i as u32);
+                    pr.state[y * nx + x] = 2;
+                }
+            }
+        }
+        for r in &mut pr.rows {
+            let e = &pr.edges;
+            r.sort_by(|&i, &j| {
+                let m = |k: u32| e[k as usize].0.0.max(e[k as usize].1.0);
+                m(j).total_cmp(&m(i))
+            });
+        }
+        // cells without edges: inside or outside as their centre, from the crossings of the
+        // row's middle line, swept from the right
+        for y in 0..ny {
+            let yc = bbox.miny + (y as f64 + 0.5) * ch;
+            let mut xs: Vec<(f64, u32)> = pr.rows[y]
+                .iter()
+                .filter_map(|&i| {
+                    let ((x1, y1), (x2, y2), k) = pr.edges[i as usize];
+                    ((y1 > yc) != (y2 > yc)).then(|| ((x2 - x1) * (yc - y1) / (y2 - y1) + x1, k))
+                })
+                .collect();
+            xs.sort_by(|a, b| b.0.total_cmp(&a.0));
+            let mut parity = vec![false; pr.polys];
+            let mut odd = 0usize;
+            let mut it = xs.iter().peekable();
+            for x in (0..nx).rev() {
+                let xc = bbox.minx + (x as f64 + 0.5) * cw;
+                while let Some(&&(cx, k)) = it.peek()
+                    && cx > xc
+                {
+                    let p = &mut parity[k as usize];
+                    *p = !*p;
+                    if *p { odd += 1 } else { odd -= 1 }
+                    it.next();
+                }
+                if pr.state[y * nx + x] != 2 && odd > 0 {
+                    pr.state[y * nx + x] = 1;
+                }
+            }
+        }
+        Some(pr)
+    }
+
+    fn col(&self, x: f64) -> usize {
+        (((x - self.bbox.minx) / self.cw).floor().max(0.0) as usize).min(self.nx - 1)
+    }
+
+    fn row(&self, y: f64) -> usize {
+        (((y - self.bbox.miny) / self.ch).floor().max(0.0) as usize).min(self.ny - 1)
+    }
+
+    pub fn contains(&self, p: P) -> bool {
+        if !self.bbox.contains(p) {
+            return false;
+        }
+        let (x, y) = (self.col(p.0), self.row(p.1));
+        match self.state[y * self.nx + x] {
+            0 => false,
+            1 => true,
+            _ => {
+                // as `ring_contains`: crossings of the ray to the right, per polygon
+                let mut parity = vec![false; self.polys];
+                for &i in &self.rows[y] {
+                    let ((x1, y1), (x2, y2), k) = self.edges[i as usize];
+                    if x1.max(x2) < p.0 {
+                        break;
+                    }
+                    if (y1 > p.1) != (y2 > p.1) && p.0 < (x2 - x1) * (p.1 - y1) / (y2 - y1) + x1 {
+                        parity[k as usize] = !parity[k as usize];
+                    }
+                }
+                parity.iter().any(|&b| b)
+            }
+        }
+    }
+
+    pub fn cover(&self, b: &BBoxF) -> Cover {
+        let c = BBoxF { minx: b.minx.max(self.bbox.minx), miny: b.miny.max(self.bbox.miny), maxx: b.maxx.min(self.bbox.maxx), maxy: b.maxy.min(self.bbox.maxy) };
+        if c.minx > c.maxx || c.miny > c.maxy {
+            return Cover::Outside;
+        }
+        let within = self.bbox.contains_box(b);
+        let (x0, x1, y0, y1) = (self.col(c.minx), self.col(c.maxx), self.row(c.miny), self.row(c.maxy));
+        let (mut ins, mut outs, mut edge) = (false, false, Vec::new());
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                match self.state[y * self.nx + x] {
+                    0 => outs = true,
+                    1 => ins = true,
+                    _ => edge.push(y * self.nx + x),
+                }
+                if ins && outs {
+                    return Cover::Partial;
+                }
+            }
+        }
+        if !edge.is_empty() {
+            let mut es: Vec<u32> = edge.iter().flat_map(|&i| self.cells[i].iter().copied()).collect();
+            es.sort_unstable();
+            es.dedup();
+            if es.iter().any(|&i| segment_meets_box(self.edges[i as usize].0, self.edges[i as usize].1, b)) {
+                return Cover::Partial;
+            }
+            // no edge inside the box: all of it is on one side
+            ins = self.contains(((c.minx + c.maxx) / 2.0, (c.miny + c.maxy) / 2.0));
+            outs = !ins;
+        }
+        match (ins, outs) {
+            (true, false) if within => Cover::Inside,
+            (true, _) => Cover::Partial,
+            _ => Cover::Outside,
+        }
+    }
+}
+
+/// Whether the segment a–b has a point in the box (Liang–Barsky).
+fn segment_meets_box(a: P, b: P, r: &BBoxF) -> bool {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (p, q) in [(-dx, a.0 - r.minx), (dx, r.maxx - a.0), (-dy, a.1 - r.miny), (dy, r.maxy - a.1)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false;
+            }
+        } else {
+            let t = q / p;
+            if p < 0.0 {
+                t0 = t0.max(t);
+            } else {
+                t1 = t1.min(t);
+            }
+            if t0 > t1 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn polygon_edges_cross_box(g: &Geom, b: &BBoxF) -> bool {
     let e7 = |p: P| ((p.0 * 1e7) as i32, (p.1 * 1e7) as i32);
     let bb = b.to_e7();
@@ -456,5 +670,50 @@ mod tests {
         let rs = rings(&raster(&[(0, 0), (1, 1)]));
         assert_eq!(rs.len(), 2);
         assert!(rs.iter().all(|r| r.0.len() == 4 && r.1 == 0), "{rs:?}");
+    }
+
+    /// A wavy ring with many corners, a hole and a second polygon: the prepared tests answer
+    /// as the direct ones, for points and boxes all over the box.
+    #[test]
+    fn prepared_polygon_answers_as_the_direct_tests() {
+        let ring = |cx: f64, cy: f64, r: f64, n: usize| -> Vec<P> {
+            let mut v: Vec<P> = (0..n)
+                .map(|i| {
+                    let a = i as f64 / n as f64 * std::f64::consts::TAU;
+                    let rr = r * (1.0 + 0.3 * (7.0 * a).sin());
+                    (cx + rr * a.cos(), cy + rr * a.sin())
+                })
+                .collect();
+            v.push(v[0]);
+            v
+        };
+        let g = Geom::Poly(vec![
+            Polygon { outer: ring(0.0, 0.0, 1.0, 300), holes: vec![ring(0.1, 0.0, 0.3, 80)] },
+            Polygon { outer: ring(3.0, 0.5, 0.5, 120), holes: vec![] },
+        ]);
+        let reg = Region::from_geom(Arc::new(g.clone()), "test".into());
+        let mut seed = 7u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for _ in 0..20_000 {
+            let p = (-1.6 + 5.0 * next(), -1.6 + 3.2 * next());
+            assert_eq!(reg.contains(p), g.contains_point(p), "{p:?}");
+        }
+        for _ in 0..3_000 {
+            let (x, y, w, h) = (-1.8 + 5.4 * next(), -1.8 + 3.6 * next(), 0.6 * next() * next(), 0.6 * next() * next());
+            let b = BBoxF { minx: x, miny: y, maxx: x + w, maxy: y + h };
+            let pts: Vec<P> = (0..=6).flat_map(|i| (0..=6).map(move |j| (x + w * i as f64 / 6.0, y + h * j as f64 / 6.0))).collect();
+            let inside = pts.iter().filter(|p| g.contains_point(**p)).count();
+            match reg.cover(&b) {
+                Cover::Inside => assert_eq!(inside, pts.len(), "{b:?}"),
+                Cover::Outside => assert_eq!(inside, 0, "{b:?}"),
+                Cover::Partial => {}
+            }
+            if inside > 0 && inside < pts.len() {
+                assert_eq!(reg.cover(&b), Cover::Partial, "{b:?}");
+            }
+        }
     }
 }

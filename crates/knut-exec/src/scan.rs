@@ -168,6 +168,9 @@ pub fn blocks(db: &Db, spec: &ScanSpec) -> R<Vec<u32>> {
     if named.as_ref().is_some_and(|p| p.is_empty()) {
         return Ok(Vec::new());
     }
+    // a node of the tree whose box lies wholly outside the region (in a hole of it, beyond a
+    // bend of its border) is left out with all blocks below it
+    let in_region = |n: &RNode| spec.region.as_ref().is_none_or(|reg| reg.cover(&BBoxF::from_e7(&n.bbox)) != Cover::Outside);
     let mut out = Vec::new();
     let r = &db.reader;
     if let Some(hashes) = &hashes {
@@ -177,6 +180,7 @@ pub fn blocks(db: &Db, spec: &ScanSpec) -> R<Vec<u32>> {
                 && t0 <= n.tmax
                 && hashes.iter().all(|h| bloom::test(b, *h))
                 && named.as_ref().is_none_or(|ps| ps.iter().any(|p| n.bbox.intersects(p)))
+                && in_region(n)
         };
         for t in ObjType::ALL {
             if spec.kinds.visits(t) {
@@ -192,7 +196,7 @@ pub fn blocks(db: &Db, spec: &ScanSpec) -> R<Vec<u32>> {
         }
     }
     if private {
-        let pred = |n: &RNode, _: &Bloom| -> bool { n.bbox.intersects(&rb) && n.tmin <= t1 && t0 <= n.tmax };
+        let pred = |n: &RNode, _: &Bloom| -> bool { n.bbox.intersects(&rb) && n.tmin <= t1 && t0 <= n.tmax && in_region(n) };
         out.extend(r.query_tree(ObjType::Way as usize, &pred).map_err(rt_err)?);
         out.extend(
             r.query_tree(TREE_LARGE, &pred)
