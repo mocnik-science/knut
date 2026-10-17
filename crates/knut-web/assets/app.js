@@ -65,6 +65,8 @@ const ICONS = {
   moon: svg('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
   auto: svg('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
   settings: svg('<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>'),
+  // stopping a running answer
+  stop: svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
   // a new conversation
   restart: svg('<path d="m16 22-1-4"/><path d="M19 13.99a1 1 0 0 0 1-1V12a2 2 0 0 0-2-2h-3a1 1 0 0 1-1-1V4a2 2 0 0 0-4 0v5a1 1 0 0 1-1 1H6a2 2 0 0 0-2 2v.99a1 1 0 0 0 1 1"/><path d="M5 14h14l1.973 6.767A1 1 0 0 1 20 22H4a1 1 0 0 1-.973-1.233z"/><path d="m8 22 1-4"/>'),
   // About
@@ -122,6 +124,20 @@ const chatColors = () => [accentColor(), ...COLORS.filter(c => c !== accentColor
 // after a tap on it) the others fold out below it, in an order that stays until it folds up -----
 
 const HOVER = window.matchMedia("(hover: hover)").matches;
+
+// the keys of both interfaces: ⌘/Ctrl + Enter starts, ⌘/Ctrl + . cancels (from anywhere on the
+// page; a key the editor or a field already took is left alone)
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+const MOD = MAC ? "⌘" : "Ctrl+";
+function useShortcuts(active, start, stop) {
+  const onKey = e => {
+    if (!active() || e.defaultPrevented || !(e.metaKey || e.ctrlKey)) return;
+    if (e.key === "Enter") { e.preventDefault(); start(); }
+    else if (e.key === ".") { e.preventDefault(); stop(); }
+  };
+  onMounted(() => window.addEventListener("keydown", onKey));
+  onUnmounted(() => window.removeEventListener("keydown", onKey));
+}
 const Pick = {
   props: { items: Array, modelValue: String, label: String },
   emits: ["update:modelValue"],
@@ -519,7 +535,7 @@ const AnswerMap = {
 
 /// The outputs with something to draw.
 function geoOf(outputs) {
-  return outputs.filter(o => o.geojson && o.geojson.features && o.geojson.features.length).map(o => ({ expr: o.expr, geojson: o.geojson }));
+  return outputs.filter(o => o.geojson && o.geojson.features && o.geojson.features.length).map(o => ({ expr: o.expr, seconds: o.seconds, geojson: o.geojson }));
 }
 
 /// The box of all of them (kept with the answer, for the map after a reload).
@@ -582,7 +598,7 @@ function chartOf(outputs) {
     if (!cat) continue;
     const bars = rows.map(r => ({ name: label(r[cat]), value: val(r) })).filter(b => b.name !== "none");
     bars.sort((a, b) => b.value - a.value);
-    return { kind: "bars", bars: bars.slice(0, 15), more: Math.max(0, bars.length - 15) };
+    return { kind: "bars", bars };
   }
   return null;
 }
@@ -592,9 +608,14 @@ const AnswerChart = {
   props: { chart: Object },
   setup(props) {
     const el = ref(null);
+    // bars: the first 15, a click on "and … more" brings the next ones
+    const BARS = 15;
+    let count = BARS;
     function draw() {
       if (!el.value || typeof d3 === "undefined") return;
-      const c = props.chart;
+      const c = props.chart.kind === "bars" && props.chart.more === undefined
+        ? { ...props.chart, bars: props.chart.bars.slice(0, count), more: Math.max(0, props.chart.bars.length - count), all: props.chart.bars }
+        : props.chart;
       const box = d3.select(el.value);
       box.selectAll("*").remove();
       const W = el.value.clientWidth || 600;
@@ -609,7 +630,10 @@ const AnswerChart = {
         g.append("rect").attr("x", left).attr("y", 3).attr("height", row - 7).attr("rx", 2).attr("fill", chatColors()[0]).attr("width", 0)
           .transition().duration(500).attr("width", b => Math.max(1, x(b.value)));
         g.append("text").attr("class", "value").attr("y", row / 2).attr("dy", "0.32em").attr("x", b => left + x(b.value) + 6).text(b => d3.format(",")(b.value));
-        if (c.more) box.append("div").attr("class", "chart-note").text(`and ${c.more} more`);
+        if (c.more && c.all) {
+          box.append("button").attr("class", "chart-note more").text(`and ${c.more} more`)
+            .on("click", () => { count += BARS; draw(); });
+        } else if (c.more) box.append("div").attr("class", "chart-note").text(`and ${c.more} more`);
         return;
       }
       const H = 220, m = { top: 10, right: 16, bottom: 26, left: 48 };
@@ -659,9 +683,10 @@ const ChatView = {
     // of the animation
     watch(turns, v => store("chat", v.map(t => ({ ...t, outputs: undefined, geo: undefined, typed: undefined, reveal: undefined, regenerating: undefined }))), { deep: true });
 
-    function history() {
+    // the conversation up to the turn `upTo` (questions after it wait their turn)
+    function history(upTo) {
       const m = [];
-      for (const t of turns.value) {
+      for (const t of turns.value.slice(0, upTo + 1)) {
         m.push({ role: "user", content: t.question });
         // the model sees its earlier queries and questions back (not the answers): follow-up
         // questions such as "and in Findorff?" refer to them
@@ -670,16 +695,28 @@ const ChatView = {
       }
       return m;
     }
-    async function ask() {
+    // questions asked while another is answered wait in the list and are answered in turn
+    const current = ref(null);
+    function ask() {
       const q = text.value.trim();
-      if (!q || busy.value) return;
-      turns.value.push({ question: q });
+      if (!q) return;
+      turns.value.push({ question: q, queued: true });
       text.value = "";
+      nextTick(scrollDown);
+      if (!busy.value) next();
+    }
+    function unqueue(i) {
+      if (turns.value[i] && turns.value[i].queued) turns.value.splice(i, 1);
+    }
+    async function next() {
+      const i = turns.value.findIndex(t => t.queued);
+      if (i < 0) return;
+      delete turns.value[i].queued;
+      current.value = i;
       busy.value = true;
       label.value = "understanding the question";
-      nextTick(scrollDown);
       try {
-        const r = await fetch("api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: history(), db: props.db }) });
+        const r = await fetch("api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ messages: history(i), db: props.db }) });
         const j = await r.json();
         if (!j.job) throw new Error(j.error || "the server did not start");
         job = j.job;
@@ -703,19 +740,22 @@ const ChatView = {
         const ok = !c.error && !c.ask && j.state !== "cancelled";
         const chart = ok ? chartOf(outputs) : null;
         const geo = !chart && ok ? geoOf(outputs) : [];
-        done({ ...c, cancelled: j.state === "cancelled", outputs, chart, geo: geo.length ? geo : null, box: boxOf(geo), mapped: geo.length > 0, seconds: j.seconds });
+        done({ ...c, cancelled: j.state === "cancelled", outputs, chart, geo: geo.length ? geo : null, box: boxOf(geo), mapped: geo.length > 0, seconds: j.seconds,
+          layers: geo.map(g => ({ expr: g.expr, seconds: g.seconds })) });
       } catch (e) {
         done({ error: "Lost the connection to knut web: " + e.message });
       }
     }
     function done(fields) {
       clearTimeout(timer);
-      const t = turns.value[turns.value.length - 1];
-      Object.assign(t, fields);
+      const t = turns.value[current.value];
+      if (t) Object.assign(t, fields);
       busy.value = false;
       job = null;
-      if (t.answer || t.ask) typeOut(t);
+      current.value = null;
+      if (t && (t.answer || t.ask)) typeOut(t);
       nextTick(() => { scrollDown(); input.value && input.value.focus(); });
+      next();
     }
     // the geometries of an answer again (after a reload): its query runs once more; for an
     // answer that counts, the query of what was counted ("Show them on the map")
@@ -832,13 +872,14 @@ const ChatView = {
       nextTick(() => ta.setSelectionRange(ta.value.length, ta.value.length));
     }
     watch(text, v => { if (back !== null && v !== turns.value[back]?.question) back = null; });
+    useShortcuts(() => true, () => { back = null; ask(); }, () => { if (busy.value) cancel(); });
     function key(e) {
       if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); back = null; ask(); }
       else if (e.key === "Escape" && busy.value) cancel();
       else if (e.key === "ArrowUp") browse(e, -1);
       else if (e.key === "ArrowDown") browse(e, 1);
     }
-    onMounted(() => nextTick(() => { scrollDown(false); input.value && input.value.focus(); }));
+    onMounted(() => nextTick(() => { scrollDown(false); input.value && input.value.focus(); next(); }));
     // the logo on the start page: still; it moves once 100 ms after the first character, and
     // again whenever the field was emptied and one starts anew
     const loader = ref(null);
@@ -885,8 +926,8 @@ const ChatView = {
       setTimeout(() => { if (copied.value === id) copied.value = null; }, 1200);
     }
     return { turns, text, busy, label, input, ask, cancel, clear, key, emit, fmtSeconds, theme, THEMES, ICONS, copied, copy, shown, regenerate, showOnMap, mapQueryOf,
-      editing, editText, editBox, startEdit, submitEdit, editKey, retry, loader, loaderSvg,
-      about, accent, ACCENTS, warn, dontAsk, toAdvanced, confirmAdvanced, asking };
+      editing, editText, editBox, startEdit, submitEdit, editKey, retry, loader, loaderSvg, current, unqueue,
+      about, accent, ACCENTS, warn, dontAsk, toAdvanced, confirmAdvanced, asking, MOD, COLORS };
   },
   template: `
     <div :class="['chat', { start: !turns.length }]">
@@ -933,7 +974,14 @@ const ChatView = {
               <p class="note bad">{{ t.error }}</p>
               <button v-if="!busy" class="retry" title="Ask again" aria-label="Ask the question again" @click="retry(i)" v-html="ICONS.retry"></button>
             </div>
-            <p v-else-if="busy && i === turns.length - 1" class="note busy">{{ label }} …</p>
+            <div v-else-if="t.queued" class="busy-row">
+              <p class="note">waiting …</p>
+              <button class="icon stop" title="Do not ask this question" aria-label="Remove the question" @click="unqueue(i)" v-html="ICONS.stop"></button>
+            </div>
+            <div v-else-if="busy && i === current" class="busy-row">
+              <p class="note busy">{{ label }} …</p>
+              <button class="icon stop" :title="'Stop (Esc, ' + MOD + '.)'" aria-label="Stop" @click="cancel" v-html="ICONS.stop"></button>
+            </div>
             <Transition name="fade">
               <AnswerChart v-if="t.chart && t.reveal !== false" :chart="t.chart" />
               <AnswerMap v-else-if="(t.geo || t.box) && t.reveal !== false" :results="t.geo || []" :box="t.box" :stale="!t.geo"
@@ -941,6 +989,12 @@ const ChatView = {
               <button v-else-if="t.answer && t.reveal !== false && mapQueryOf(t.query)" class="show-map" :disabled="!!t.regenerating"
                 @click="showOnMap(t)">{{ t.regenerating ? 'drawing the map…' : 'Show them on the map' }}</button>
             </Transition>
+            <!-- several results on one map: their colours, queries and times -->
+            <ul v-if="t.layers && t.layers.length > 1 && (t.geo || t.box) && t.reveal !== false" class="map-legend">
+              <li v-for="(l, k) in t.layers" :key="k">
+                <i :style="{ background: COLORS[k % COLORS.length] }"></i><code>{{ l.expr }}</code><span>{{ fmtSeconds(l.seconds) }}</span>
+              </li>
+            </ul>
             <!-- right below the answer: the time it took; opened, the query and a way to the editor -->
             <details v-if="t.query" class="query">
               <summary :title="'The query' + (t.seconds ? '; the whole answer took ' + fmtSeconds(t.seconds) : '')">{{ t.seconds ? fmtSeconds(t.seconds) : 'query' }}</summary>
@@ -948,7 +1002,7 @@ const ChatView = {
                 <pre>{{ t.query }}</pre>
                 <div class="query-tools">
                   <span v-if="t.query_seconds != null" class="query-time" title="The time the query took to run (without the language model)">{{ fmtSeconds(t.query_seconds) }}</span>
-                  <button v-if="!(busy && i === turns.length - 1)" class="icon" title="Open in the advanced query editor" aria-label="Open in the advanced query editor"
+                  <button v-if="!(busy && i === current)" class="icon" title="Open in the advanced query editor" aria-label="Open in the advanced query editor"
                     @click="emit('open', t)" v-html="ICONS.rocket"></button>
                 </div>
               </div>
@@ -961,8 +1015,7 @@ const ChatView = {
       <div :class="['chat-input', { busy }]">
         <textarea ref="input" v-model="text" rows="1" :placeholder="turns.length ? 'Ask a follow-up question …' : 'Ask about the OpenStreetMap data, e.g. How many benches are there in Vegesack?'"
           @keydown="key" :disabled="busy && false"></textarea>
-        <button v-if="!busy" :class="['primary', 'ask', { empty: !text.trim() }]" :disabled="!text.trim()" :tabindex="text.trim() ? 0 : -1" title="Ask (Enter)" @click="ask">Ask</button>
-        <button v-else class="cancel" title="Cancel (Esc)" @click="cancel">Cancel</button>
+        <button :class="['primary', 'ask', { empty: !text.trim() }]" :disabled="!text.trim()" :tabindex="text.trim() ? 0 : -1" :title="'Ask (Enter, ' + MOD + 'Enter)'" @click="ask">Ask</button>
       </div>
       <p v-if="turns.length" class="chat-disclaimer">knut is experimental and might be mistaken.</p>
       </div>
@@ -1154,6 +1207,7 @@ const App = {
       state.running = false;
       state.job = null;
     }
+    useShortcuts(() => !textMode.value, run, cancel);
     async function cancel() {
       if (!state.job) return;
       state.cancelling = true;
@@ -1234,12 +1288,21 @@ const App = {
     function saveJson(r, i) { download(`result-${i + 1}.json`, JSON.stringify(r.value, null, 2), "application/json"); }
     function saveGeojson(r, i) { download(`result-${i + 1}.geojson`, JSON.stringify(r.geojson), "application/geo+json"); }
     function copyText(r) { navigator.clipboard && navigator.clipboard.writeText(r.text); }
+    // an example's code to the clipboard; its button says so for a moment
+    const copiedExample = ref(null);
+    function copyExample(e) {
+      if (!navigator.clipboard) return;
+      navigator.clipboard.writeText(e.code).then(() => {
+        copiedExample.value = e;
+        setTimeout(() => { if (copiedExample.value === e) copiedExample.value = null; }, 1200);
+      }).catch(() => {});
+    }
 
     return {
       state, map, editorHost, goToLine, messageLines,
       run, cancel, reset, progressPct, progressLabel, progressRight, filtered, useExample,
       summary, toggleLayer, zoomTo, saveJson, saveGeojson, copyText, COLORS, fmtSeconds, theme, textMode, openTurn,
-      themes: THEMES, ICONS, accent, accents: ACCENTS,
+      themes: THEMES, ICONS, accent, accents: ACCENTS, copiedExample, copyExample, MOD,
     };
   },
   template: `
@@ -1269,8 +1332,8 @@ const App = {
 </template></pre>
         </div>
         <div class="actions">
-          <button v-if="!state.running" class="primary" :disabled="!state.query.trim()" title="Run (⌘/Ctrl + Enter)" @click="run">Run</button>
-          <button v-else class="cancel" :disabled="state.cancelling" title="Cancel (Esc)" @click="cancel">Cancel</button>
+          <button v-if="!state.running" class="primary" :disabled="!state.query.trim()" :title="'Run (' + MOD + 'Enter)'" @click="run">Run</button>
+          <button v-else class="cancel" :disabled="state.cancelling" :title="'Cancel (Esc, ' + MOD + '.)'" @click="cancel">Cancel</button>
           <button title="Clear the query, the results and the map" @click="reset">Reset</button>
           <div v-if="state.running" class="progress">
             <div class="label"><span>{{ progressLabel }}</span><span>{{ progressRight }}</span></div>
@@ -1288,6 +1351,7 @@ const App = {
           <p>{{ e.description }}</p>
           <pre>{{ e.code }}</pre>
           <div class="buttons">
+            <button class="small" @click="copyExample(e)">{{ copiedExample === e ? 'Copied' : 'Copy' }}</button>
             <button class="small" @click="useExample(e, false)">Use</button>
             <button class="small primary" :disabled="state.running" @click="useExample(e, true)">Run</button>
           </div>

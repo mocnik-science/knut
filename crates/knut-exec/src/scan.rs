@@ -121,6 +121,35 @@ fn intersection(a: &BBoxF, b: &BBoxF) -> BBoxF {
     if r.minx > r.maxx || r.miny > r.maxy { BBoxF::EMPTY } else { r }
 }
 
+/// For a selection by an exact name (`x:name='Dialoghaus Hamburg'`) in the latest state: the
+/// points of the objects with that name, from the name index. Only the blocks around them can
+/// hold matches (a value that is not in the dictionary has no Bloom entry, so the filters
+/// alone would leave nearly every block). `None` if the index cannot tell.
+fn named_points(db: &Db, spec: &ScanSpec) -> Option<Vec<knut_format::BBox>> {
+    let &TimeMode::State(t) = &spec.time else { return None };
+    if t < db.latest {
+        return None;
+    }
+    let name = spec.pred.required().into_iter().find(|(k, v)| k == "name" && v.is_some())?.1?;
+    let el = db.reader.element(knut_format::container::ElementKind::NameIndex)?;
+    // built for this state of the data (the index knows the names of the latest versions),
+    // with the nodes
+    let at = knut_format::time::format_time(db.latest);
+    if !el.params.iter().any(|(k, v)| k == "at" && *v == at) || !el.params.iter().any(|(k, v)| k == "nodes" && v == "yes") {
+        return None;
+    }
+    let b = crate::indexes::element_bytes(&db.reader, knut_format::container::ElementKind::NameIndex).ok()?;
+    let hits = crate::geocode::NameIx::new(b).ok()?.exact(&name)?;
+    Some(
+        hits.iter()
+            .map(|h| {
+                let (x, y) = ((h.lon * 1e7).round() as i32, (h.lat * 1e7).round() as i32);
+                knut_format::BBox { minx: x - 1, miny: y - 1, maxx: x + 1, maxy: y + 1 }
+            })
+            .collect(),
+    )
+}
+
 /// Blocks that can contain matches, in ascending order.
 pub fn blocks(db: &Db, spec: &ScanSpec) -> R<Vec<u32>> {
     let rb = match (spec.region.as_ref().map(|r| r.bbox()), spec.bbox) {
@@ -135,11 +164,19 @@ pub fn blocks(db: &Db, spec: &ScanSpec) -> R<Vec<u32>> {
     let (t0, t1) = time_range(db, &spec.time);
     let private = want_private(spec);
     let hashes = bloom_hashes(db, &spec.pred);
+    let named = named_points(db, spec);
+    if named.as_ref().is_some_and(|p| p.is_empty()) {
+        return Ok(Vec::new());
+    }
     let mut out = Vec::new();
     let r = &db.reader;
     if let Some(hashes) = &hashes {
         let pred = |n: &RNode, b: &Bloom| -> bool {
-            n.bbox.intersects(&rb) && n.tmin <= t1 && t0 <= n.tmax && hashes.iter().all(|h| bloom::test(b, *h))
+            n.bbox.intersects(&rb)
+                && n.tmin <= t1
+                && t0 <= n.tmax
+                && hashes.iter().all(|h| bloom::test(b, *h))
+                && named.as_ref().is_none_or(|ps| ps.iter().any(|p| n.bbox.intersects(p)))
         };
         for t in ObjType::ALL {
             if spec.kinds.visits(t) {

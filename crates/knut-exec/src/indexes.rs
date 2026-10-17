@@ -95,7 +95,8 @@ pub fn build(path: &Path, kind: ElementKind, temporal: Temporal, progress: &Prog
             let bytes = crate::geocode::encode_names(&names);
             Ok(Built {
                 sections: vec![NewSection { kind: knut_format::layout::SectionKind::Index as u32, flags: 0, bytes }],
-                params: vec![time_param(&db), ("names".into(), names.len().to_string())],
+                // ("nodes": built with the nodes, which earlier builds left out; scans rely on it)
+                params: vec![time_param(&db), ("names".into(), names.len().to_string()), ("nodes".into(), "yes".into())],
             })
         }
         ElementKind::AddressIndex => {

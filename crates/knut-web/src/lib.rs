@@ -402,10 +402,18 @@ fn start_chat(st: &State, history: Vec<(String, String)>, typed: Option<PathBuf>
             Err(e) => (empty(), json!({ "error": e })),
             Ok(chat::Outcome::Ask(a)) => (empty(), json!({ "ask": a })),
             Ok(chat::Outcome::Invalid { query, problems }) => (empty(), json!({ "query": query, "problems": problems, "error": "no valid query could be formed for the question" })),
-            Ok(chat::Outcome::Failed { query, error }) => (empty(), json!({ "query": query, "error": error })),
+            // an unknown place: asked about (its spelling), not shown as an error
+            Ok(chat::Outcome::Failed { query, error }) => match chat::unknown_place(&error) {
+                Some(a) => (empty(), json!({ "query": query, "ask": a })),
+                None => (empty(), json!({ "query": query, "error": error })),
+            },
             Ok(chat::Outcome::Ran { query, result }) => {
                 let info = if result.cancelled {
                     json!({ "query": query })
+                } else if !result.outputs.is_empty() && result.outputs.iter().all(|o| o.value.is_null()) {
+                    // nothing at all (a `pick` that found nothing, …): mostly a name that the data
+                    // spell differently; the model would describe a map that is not there
+                    json!({ "query": query, "answer": chat::NOTHING_FOUND })
                 } else {
                     control.begin_step(0, 1, "writing the answer");
                     let outputs: Vec<(String, String)> = result.outputs.iter().map(|o| (o.expr.clone(), o.text.clone())).collect();

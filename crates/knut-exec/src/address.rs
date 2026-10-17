@@ -79,7 +79,7 @@ fn element(ctx: &Ctx, a: &Address, score: f64) -> R<Option<Value>> {
 pub fn geocode(ctx: &Ctx, query: &str, one: bool) -> R<Value> {
     let hits = with_index(ctx, |ix| ix.geocode(query, if one { 1 } else { LIMIT }))?;
     let mut out = Vec::new();
-    let nq = query.split(',').next().and_then(|s| s.split_whitespace().find(|w| w.starts_with(|c: char| c.is_ascii_digit()))).map(crate::geocode::normalize);
+    let nq = crate::geocode::address_query(query).split(',').next().and_then(|s| s.split_whitespace().find(|w| w.starts_with(|c: char| c.is_ascii_digit()))).map(crate::geocode::normalize);
     for a in &hits {
         let score = match &nq {
             Some(n) if crate::geocode::normalize(&a.number) == *n => 1.0,

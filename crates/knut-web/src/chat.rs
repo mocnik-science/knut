@@ -240,6 +240,35 @@ pub fn solve<R>(
     unreachable!("the last run returns")
 }
 
+/// The question back for a place that is not known (E210 of a run): "The place X could not be
+/// found. Are you sure about its spelling?", with the closest known name if there is one.
+pub fn unknown_place(error: &str) -> Option<String> {
+    fn after<'a>(s: &'a str, start: &str) -> Option<&'a str> {
+        s.find(start).map(|i| &s[i + start.len()..])
+    }
+    let name = after(error, "No region called \"").or_else(|| after(error, "Eine Region namens \""))?;
+    let name = &name[..name.find('"')?];
+    let mut text = format!("The place {name} could not be found. Are you sure about its spelling?");
+    if let Some(s) = after(error, "within '").and_then(|s| s.find('\'').map(|j| &s[..j])) {
+        text.push_str(&format!(" Did you mean {}?", title_case(s)));
+    }
+    Some(text)
+}
+
+/// `bremen-nord` → `Bremen-Nord` (the names of the suggestions are lower case).
+fn title_case(s: &str) -> String {
+    let mut out = String::new();
+    let mut start = true;
+    for c in s.chars() {
+        if start { out.extend(c.to_uppercase()) } else { out.push(c) }
+        start = c == ' ' || c == '-';
+    }
+    out
+}
+
+/// The answer when a query found nothing at all (its results are all `none`).
+pub const NOTHING_FOUND: &str = "Nothing could be found for this question. Perhaps a name in it (a station, a place, …) is spelled differently in the map data?";
+
 /// What the model reads after the check of its query found errors.
 pub fn correction_message(problems: &[String]) -> String {
     format!("Checking this query gives these messages:\n\n{}\n\nCorrect the query. Reply with QUERY: or ASK: again.", problems.join("\n\n"))
@@ -433,6 +462,14 @@ mod tests {
         assert_eq!(p.query.as_deref(), Some("count of nodes n with n:amenity=bench"));
         assert!(p.problems.is_empty());
         assert_eq!(p.attempts, 2);
+    }
+
+    #[test]
+    fn an_unknown_place_is_asked_about() {
+        let e = "Error [E210]:  No region called \"Gesenkirchen\" is known.\n\n  --> query.knut:1:33\n  Did you mean:\n    within 'gelsenkirchen'\n";
+        assert_eq!(unknown_place(e).unwrap(), "The place Gesenkirchen could not be found. Are you sure about its spelling? Did you mean Gelsenkirchen?");
+        assert_eq!(unknown_place("Error [E210]:  No region called \"Xyz\" is known.").unwrap(), "The place Xyz could not be found. Are you sure about its spelling?");
+        assert!(unknown_place("Error [E100]: something else").is_none());
     }
 
     #[test]

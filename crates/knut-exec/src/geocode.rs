@@ -215,17 +215,19 @@ fn class_of(e: &Elem) -> String {
     String::new()
 }
 
-fn state_spec(db: &Db, pred: TagPred) -> ScanSpec {
-    ScanSpec {
-        bbox: None,
-        kinds: KindMask { node: true, way: true, relation: true, ..Default::default() },
-        time: TimeMode::State(db.latest),
-        region: None,
-        pred,
-        need_geom: false,
-        need_hist: false,
-        attrs_history: false,
-    }
+fn state_spec(db: &Db, pred: TagPred, kinds: KindMask, need_geom: bool) -> ScanSpec {
+    ScanSpec { bbox: None, kinds, time: TimeMode::State(db.latest), region: None, pred, need_geom, need_hist: false, attrs_history: false }
+}
+
+/// A scan of the latest state over the objects with `pred`: nodes with their position (a scan
+/// without geometry reads only their tags, and they would be left out), ways and relations
+/// with their box.
+fn state_fold<A: Send>(db: &Db, ctl: Option<&crate::control::Control>, pred: TagPred, step: &(dyn Fn(&mut A, Item) -> R<()> + Sync), init: &(dyn Fn() -> A + Sync)) -> R<Vec<A>> {
+    let nodes = state_spec(db, pred.clone(), KindMask { node: true, ..Default::default() }, true);
+    let rest = state_spec(db, pred, KindMask { way: true, relation: true, ..Default::default() }, false);
+    let mut parts = scan::fold(db, ctl, &nodes, init, step)?;
+    parts.extend(scan::fold(db, ctl, &rest, init, step)?);
+    Ok(parts)
 }
 
 // ----- name index ------------------------------------------------------------------------
@@ -240,13 +242,12 @@ pub struct NameEntry {
 
 /// All objects with a name at the last moment of the data.
 pub fn collect_names(db: &Db, ctl: Option<&crate::control::Control>) -> R<Vec<NameEntry>> {
-    let spec = state_spec(db, TagPred::Has("name".into()));
-    let parts = scan::fold(db, ctl, &spec, &Vec::new, &|acc: &mut Vec<NameEntry>, it: Item| {
+    let parts = state_fold(db, ctl, TagPred::Has("name".into()), &|acc: &mut Vec<NameEntry>, it: Item| {
         let Item::Elem(e) = it else { return Ok(()) };
         let (Some(n), Some(p), Some(t)) = (e.tag("name"), point_of(&e), e.otype) else { return Ok(()) };
         acc.push(NameEntry { otype: t, id: e.id, point: p, name: n.to_string(), class: class_of(&e) });
         Ok(())
-    })?;
+    }, &Vec::new)?;
     let mut v: Vec<NameEntry> = parts.into_iter().flatten().collect();
     v.sort_by_key(|x| (x.otype, x.id));
     v.dedup_by_key(|x| (x.otype, x.id));
@@ -410,6 +411,31 @@ impl<'a> NameIx<'a> {
         }
     }
 
+    /// All objects whose name is exactly `name` (the postings of its words intersected);
+    /// `None` for a name without words, which the index cannot find.
+    pub fn exact(&self, name: &str) -> Option<Vec<NameHit>> {
+        let ws = tokens(name);
+        if ws.is_empty() {
+            return None;
+        }
+        let mut cur: Option<Vec<u32>> = None;
+        for w in &ws {
+            let i = self.toks.lower_bound(w);
+            if i >= self.toks.n || self.toks.get(i) != w {
+                return Some(Vec::new());
+            }
+            let p = self.postings(i);
+            cur = Some(match cur {
+                None => p,
+                Some(c) => {
+                    let set: std::collections::HashSet<u32> = p.into_iter().collect();
+                    c.into_iter().filter(|e| set.contains(e)).collect()
+                }
+            });
+        }
+        Some(cur.unwrap_or_default().into_iter().map(|e| self.hit(e as usize, 0.0)).filter(|h| h.name == name).collect())
+    }
+
     /// The best `limit` objects whose name contains all words of `query` (the last one
     /// also as a prefix, all with small typos).
     pub fn search(&self, query: &str, limit: usize) -> Vec<NameHit> {
@@ -487,8 +513,7 @@ pub struct AddrEntry {
 
 /// All objects with a house number at the last moment of the data.
 pub fn collect_addresses(db: &Db, ctl: Option<&crate::control::Control>) -> R<Vec<AddrEntry>> {
-    let spec = state_spec(db, TagPred::Has("addr:housenumber".into()));
-    let parts = scan::fold(db, ctl, &spec, &Vec::new, &|acc: &mut Vec<AddrEntry>, it: Item| {
+    let parts = state_fold(db, ctl, TagPred::Has("addr:housenumber".into()), &|acc: &mut Vec<AddrEntry>, it: Item| {
         let Item::Elem(e) = it else { return Ok(()) };
         let (Some(n), Some(p), Some(t)) = (e.tag("addr:housenumber"), point_of(&e), e.otype) else { return Ok(()) };
         let street = e.tag("addr:street").or_else(|| e.tag("addr:place")).map(|s| s.to_string()).unwrap_or_default();
@@ -502,7 +527,7 @@ pub fn collect_addresses(db: &Db, ctl: Option<&crate::control::Control>) -> R<Ve
             id: e.id,
         });
         Ok(())
-    })?;
+    }, &Vec::new)?;
     let mut v: Vec<AddrEntry> = parts.into_iter().flatten().collect();
     v.sort_by_key(|x| (x.otype, x.id));
     v.dedup_by_key(|x| (x.otype, x.id));
@@ -657,9 +682,11 @@ impl<'a> AddrIx<'a> {
         }
     }
 
-    /// Addresses for a query like `Am Wall 201, Bremen` or `Hauptstraße 5 28195`: the
-    /// street, a house number and optionally postcode or city. Best first.
+    /// Addresses for a query like `Am Wall 201, Bremen`, `Am Wall 201 in Bremen` or
+    /// `Hauptstraße 5 28195`: the street, a house number and optionally postcode or city.
+    /// Best first.
     pub fn geocode(&self, query: &str, limit: usize) -> Vec<Address> {
+        let query = address_query(query);
         let mut parts = query.split(',').map(str::trim);
         let first = parts.next().unwrap_or("");
         let rest: Vec<String> = parts.flat_map(tokens).collect();
@@ -750,9 +777,32 @@ impl<'a> AddrIx<'a> {
     }
 }
 
+/// An address as written with " in " before the town (`Am Wall 201 in Bremen`) as with a
+/// comma (`Am Wall 201, Bremen`); with a comma, as it is.
+pub fn address_query(query: &str) -> String {
+    if query.contains(',') {
+        return query.to_string();
+    }
+    let lower = query.to_lowercase();
+    match lower.rfind(" in ") {
+        Some(i) if i > 0 && lower.is_char_boundary(i) && query.is_char_boundary(i) && query.len() == lower.len() => {
+            format!("{}, {}", query[..i].trim(), query[i + 4..].trim())
+        }
+        _ => query.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_town_may_follow_after_in() {
+        assert_eq!(address_query("Richard-Strauss-Weg 7 in Dorsten"), "Richard-Strauss-Weg 7, Dorsten");
+        assert_eq!(address_query("Am Wall 201 In Bremen"), "Am Wall 201, Bremen");
+        assert_eq!(address_query("In der Vahr 5"), "In der Vahr 5");
+        assert_eq!(address_query("Haus in der Sonne 4, Bremen"), "Haus in der Sonne 4, Bremen");
+    }
 
     #[test]
     fn spellings_compare_equal() {
