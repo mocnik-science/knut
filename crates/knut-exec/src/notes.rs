@@ -2,7 +2,7 @@
 //! optionally bzip2-compressed) into `x.notes.knutidx`. Also reads changeset dumps.
 
 use crate::cs::sidecar;
-use crate::eval::Ctx;
+use crate::eval::{Ctx, lock};
 use crate::set::{SetSrc, SetV};
 use crate::value::*;
 use knut_lang::diag::{Diagnostic, Span, Text2};
@@ -171,11 +171,55 @@ pub fn exists(db_path: &Path) -> bool {
     sidecar(db_path, "notes").exists()
 }
 
+/// Notes indexes read so far, by file (and its size and time): kept for the process.
+static SHARED: std::sync::Mutex<Vec<(std::path::PathBuf, (u64, Option<std::time::SystemTime>), Arc<NotesIndex>)>> = std::sync::Mutex::new(Vec::new());
+
+/// The notes index next to the database, read once per process; `None` if there is none.
+pub fn shared(db: &crate::db::Db) -> Option<Arc<NotesIndex>> {
+    let path = sidecar(&db.path, "notes");
+    let meta = std::fs::metadata(&path).ok()?;
+    let stamp = (meta.len(), meta.modified().ok());
+    let mut all = lock(&SHARED);
+    if let Some(x) = all.iter().find(|x| x.0 == path && x.1 == stamp) {
+        return Some(x.2.clone());
+    }
+    let ix = Arc::new(read(&path).ok()?);
+    all.push((path, stamp, ix.clone()));
+    Some(ix)
+}
+
+fn read(path: &std::path::Path) -> Result<NotesIndex, String> {
+    let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let z = b.strip_prefix(b"KNUTNT1\0").ok_or("not a notes index")?;
+    let raw = zstd::decode_all(z).map_err(|e| e.to_string())?;
+    let notes: Vec<RawNote> = postcard::from_bytes(&raw).map_err(|e| e.to_string())?;
+    let mut notes: Vec<Arc<NoteRec>> = notes
+        .into_iter()
+        .map(|n| {
+            Arc::new(NoteRec {
+                id: n.id,
+                lon: n.lon,
+                lat: n.lat,
+                created: n.created,
+                closed: n.closed,
+                status: Arc::from(if n.closed.is_some() { "closed" } else { "open" }),
+                text: Arc::from(n.text.as_str()),
+                comments: n.comments,
+            })
+        })
+        .collect();
+    notes.sort_by_key(|n| n.id);
+    Ok(NotesIndex { notes })
+}
+
 pub fn index(ctx: &Ctx, span: Span) -> R<Arc<NotesIndex>> {
     ctx.caches
         .notes
         .get_or_init(|| {
             let db = ctx.db()?;
+            if let Some(ix) = shared(db) {
+                return Ok(ix);
+            }
             let path = sidecar(&db.path, "notes");
             let err = |msg: String| {
                 RtErr::fatal(
@@ -188,27 +232,8 @@ pub fn index(ctx: &Ctx, span: Span) -> R<Arc<NotesIndex>> {
                     .sugg(format!("knut index notes {} planet-notes-latest.osn.bz2", db.path.display())),
                 )
             };
-            let b = std::fs::read(&path).map_err(|e| err(format!("{}: {e}", path.display())))?;
-            let z = b.strip_prefix(b"KNUTNT1\0").ok_or_else(|| err("not a notes index".into()))?;
-            let raw = zstd::decode_all(z).map_err(|e| err(e.to_string()))?;
-            let notes: Vec<RawNote> = postcard::from_bytes(&raw).map_err(|e| err(e.to_string()))?;
-            let mut notes: Vec<Arc<NoteRec>> = notes
-                .into_iter()
-                .map(|n| {
-                    Arc::new(NoteRec {
-                        id: n.id,
-                        lon: n.lon,
-                        lat: n.lat,
-                        created: n.created,
-                        closed: n.closed,
-                        status: Arc::from(if n.closed.is_some() { "closed" } else { "open" }),
-                        text: Arc::from(n.text.as_str()),
-                        comments: n.comments,
-                    })
-                })
-                .collect();
-            notes.sort_by_key(|n| n.id);
-            Ok(Arc::new(NotesIndex { notes }))
+            // (no index, or an unreadable one: the reason)
+            Err(err(read(&path).err().unwrap_or_else(|| format!("{}: unreadable", path.display()))))
         })
         .clone()
 }

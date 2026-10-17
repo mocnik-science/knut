@@ -36,12 +36,35 @@ fn admin_level(e: &Elem) -> u32 {
     e.tag("admin_level").and_then(|s| s.parse().ok()).unwrap_or(99)
 }
 
-/// The region for a place name (cached).
+/// Regions found so far, per database and name: kept for the process (finding one assembles
+/// or reads its boundary and prepares it for tests), like the boundaries themselves.
+type Found = std::collections::HashMap<String, Value>;
+static FOUND: Mutex<Vec<(std::path::PathBuf, i64, Found)>> = Mutex::new(Vec::new());
+
+/// The region for a place name (cached for the run, and found regions for the process).
 pub fn region_value(ctx: &Ctx, name: &str, span: Span) -> R<Value> {
     if let Some(v) = lock(&ctx.caches.places).get(name) {
         return v.clone();
     }
-    let r = lookup(ctx, name, span);
+    let db = ctx.db()?;
+    let known = lock(&FOUND).iter().find(|x| x.0 == db.path && x.1 == db.latest).and_then(|x| x.2.get(name).cloned());
+    let r = match known {
+        Some(v) => Ok(v),
+        None => {
+            let r = lookup(ctx, name, span);
+            // (errors carry the place in the query, so they stay with the run)
+            if let Ok(v) = &r {
+                let mut all = lock(&FOUND);
+                match all.iter_mut().find(|x| x.0 == db.path && x.1 == db.latest) {
+                    Some(x) => {
+                        x.2.insert(name.to_string(), v.clone());
+                    }
+                    None => all.push((db.path.clone(), db.latest, Found::from([(name.to_string(), v.clone())]))),
+                }
+            }
+            r
+        }
+    };
     lock(&ctx.caches.places).insert(name.to_string(), r.clone());
     r
 }

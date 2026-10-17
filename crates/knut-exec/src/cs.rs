@@ -219,29 +219,53 @@ fn to_index(recs: Vec<RawCs>, db: &Db) -> CsIndex {
     CsIndex { recs, by_id, users, by_uid }
 }
 
+/// Changeset indexes decoded so far, per database: kept for the process (decoding the one of
+/// Germany takes seconds).
+static SHARED: std::sync::Mutex<Vec<(std::path::PathBuf, i64, Arc<CsIndex>)>> = std::sync::Mutex::new(Vec::new());
+
+fn remembered(db: &Db) -> Option<Arc<CsIndex>> {
+    lock(&SHARED).iter().find(|x| x.0 == db.path && x.1 == db.latest).map(|x| x.2.clone())
+}
+
+fn remember(db: &Db, ix: Arc<CsIndex>) -> Arc<CsIndex> {
+    let mut all = lock(&SHARED);
+    if let Some(x) = all.iter().find(|x| x.0 == db.path && x.1 == db.latest) {
+        return x.2.clone();
+    }
+    all.push((db.path.clone(), db.latest, ix.clone()));
+    ix
+}
+
+/// The stored changeset index (container element or side file), decoded once per process;
+/// `None` if there is none.
+pub fn shared(db: &Db) -> Option<Arc<CsIndex>> {
+    if let Some(ix) = remembered(db) {
+        return Some(ix);
+    }
+    let f = match db.reader.element(knut_format::container::ElementKind::Changesets) {
+        Some(el) => el.sections.first().and_then(|s| db.reader.section_bytes(s).ok()).and_then(decode),
+        None => std::fs::read(sidecar(&db.path, "changesets")).ok().as_deref().and_then(decode).filter(|f| f.stamp == stamp(db)),
+    }?;
+    Some(remember(db, Arc::new(to_index(f.recs, db))))
+}
+
 /// The changeset index: from the container element, else from an older side file next to
 /// the database, else built now (and not stored: `knut manage FILE add changesets` stores it).
+/// Kept for the process once it is there.
 pub fn index(ctx: &Ctx) -> R<Arc<CsIndex>> {
     ctx.caches
         .cs
         .get_or_init(|| {
             let db = ctx.db()?;
-            if let Some(el) = db.reader.element(knut_format::container::ElementKind::Changesets)
-                && let Some(f) = el.sections.first().and_then(|s| db.reader.section_bytes(s).ok()).and_then(decode)
-            {
-                return Ok(Arc::new(to_index(f.recs, db)));
-            }
-            if let Some(f) = std::fs::read(sidecar(&db.path, "changesets")).ok().as_deref().and_then(decode)
-                && f.stamp == stamp(db)
-            {
-                return Ok(Arc::new(to_index(f.recs, db)));
+            if let Some(ix) = shared(db) {
+                return Ok(ix);
             }
             lock(&ctx.caches.notices).push(format!(
                 "Deriving changesets and users from all versions; to keep them: knut manage {} add changesets",
                 db.path.display()
             ));
             let recs = build(db).map_err(|e| RtErr::internal(Span::default(), e))?;
-            Ok(Arc::new(to_index(recs, db)))
+            Ok(remember(db, Arc::new(to_index(recs, db))))
         })
         .clone()
 }

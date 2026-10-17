@@ -76,6 +76,19 @@ fn opt<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 
 // ── running queries ──
 
+/// `--minimal`, `--preload` (the default) or `--preload-all` among the arguments.
+fn load_mode() -> knut_exec::load::Mode {
+    use knut_exec::load::Mode;
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--minimal") {
+        Mode::Minimal
+    } else if args.iter().any(|a| a == "--preload-all") {
+        Mode::PreloadAll
+    } else {
+        Mode::Preload
+    }
+}
+
 struct Database {
     path: PathBuf,
     db: Arc<Db>,
@@ -86,6 +99,13 @@ impl Database {
     fn open(path: &str) -> Result<Database, String> {
         let path = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
         let db = Arc::new(Db::open(&path)?);
+        // many queries in one process: what they will need is loaded ahead (--minimal,
+        // --preload: the default, --preload-all)
+        knut_exec::load::load(&db, load_mode(), |s| {
+            if s.seconds > 0.5 {
+                eprintln!("  loaded {} ({:.1} s)", s.name, s.seconds);
+            }
+        });
         let description = chat::database_description(Some(&path), Some(&db));
         Ok(Database { path, db, description })
     }

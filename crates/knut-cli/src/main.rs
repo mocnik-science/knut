@@ -146,14 +146,45 @@ struct WebArgs {
     /// Name of the model on that server (default: qwen3:1.7b)
     #[arg(long)]
     llm_model: Option<String>,
-    /// Load all indexes of the database (routing network, hierarchies, name and address index,
-    /// …) at the start, so that no query has to wait for them
-    #[arg(long)]
-    preload: bool,
+    #[command(flatten)]
+    load: LoadArgs,
     /// Let the page /performance store new target times also when opened from another computer
     /// (from this one it always may)
     #[arg(long)]
     allow_performance_persist: bool,
+}
+
+/// How much is loaded before the first query (default: --preload)
+#[derive(Args, Clone, Copy, Default)]
+#[group(multiple = false)]
+struct LoadArgs {
+    /// Load only what every query needs (dictionaries, block table, spatial index, tag
+    /// filters); everything else when a query first needs it
+    #[arg(long)]
+    minimal: bool,
+    /// Also load what is worth it: the smaller indexes, and the routing network, its
+    /// connected parts, the hierarchies and the changesets as far as half the memory allows
+    /// (the default)
+    #[arg(long)]
+    preload: bool,
+    /// Load everything, the data blocks too, as far as most of the memory allows
+    #[arg(long)]
+    preload_all: bool,
+}
+
+impl LoadArgs {
+    fn mode(self, default: knut_exec::load::Mode) -> knut_exec::load::Mode {
+        use knut_exec::load::Mode;
+        if self.minimal {
+            Mode::Minimal
+        } else if self.preload {
+            Mode::Preload
+        } else if self.preload_all {
+            Mode::PreloadAll
+        } else {
+            default
+        }
+    }
 }
 
 #[derive(Args)]
@@ -517,7 +548,7 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.cmd {
         Cmd::Run(_) => unreachable!(),
         Cmd::Index { what } => index(what),
-        Cmd::Web(a) => knut_web::serve(knut_web::WebOptions { db: a.db, host: a.host, port: a.port, open: !a.no_open, style: a.style, llm: a.llm, llm_model: a.llm_model, preload: a.preload, allow_performance_persist: a.allow_performance_persist }),
+        Cmd::Web(a) => knut_web::serve(knut_web::WebOptions { db: a.db, host: a.host, port: a.port, open: !a.no_open, style: a.style, llm: a.llm, llm_model: a.llm_model, load: a.load.mode(knut_exec::load::Mode::Preload), allow_performance_persist: a.allow_performance_persist }),
         Cmd::Build(a) => build(a),
         Cmd::Info { file, detailed, users } => info(&file, detailed, users),
         Cmd::Search { file, text, limit } => search(&file, &text, limit),

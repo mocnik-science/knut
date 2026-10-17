@@ -28,6 +28,7 @@ geographiclib-rs = "0.2"
 csv = "1"
 quick-xml = "0.42"
 bzip2 = "0.6"
+libc.workspace = true
 
 [dev-dependencies]
 knut-builder.workspace = true

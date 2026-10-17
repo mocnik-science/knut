@@ -19,6 +19,7 @@ pub struct Db {
     pub extent: BBoxF,
     pub users: bool,
     names: OnceLock<HashMap<u32, Str>>,
+    focus: OnceLock<BBoxF>,
 }
 
 impl std::fmt::Debug for Db {
@@ -58,6 +59,7 @@ impl Db {
             users,
             path: path.to_path_buf(),
             names: OnceLock::new(),
+            focus: OnceLock::new(),
             reader,
         })
     }
@@ -67,6 +69,11 @@ impl Db {
     /// their own. So every node block counts with its number of objects, sprawling blocks
     /// are left out, and of the centres the weighted 5th to 95th percentiles are taken.
     pub fn focus(&self) -> BBoxF {
+        // (it reads the headers of all blocks: once)
+        *self.focus.get_or_init(|| self.compute_focus())
+    }
+
+    fn compute_focus(&self) -> BBoxF {
         let r = &self.reader;
         let mut blocks = Vec::new();
         for no in 0..r.n_blocks() as u32 {

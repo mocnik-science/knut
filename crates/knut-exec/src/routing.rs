@@ -1066,11 +1066,19 @@ pub fn isochrone_raster(db: &Db, net: &RoutingNet, from: &Snap, dist: &[f64], re
 }
 
 /// The routing network of a database, loaded once.
-pub fn load(db: &Db) -> Option<Arc<RoutingNet>> {
-    static CACHE: std::sync::Mutex<Vec<(std::path::PathBuf, u64, Arc<RoutingNet>)>> = std::sync::Mutex::new(Vec::new());
+static NETS: std::sync::Mutex<Vec<(std::path::PathBuf, u64, Arc<RoutingNet>)>> = std::sync::Mutex::new(Vec::new());
+
+/// The stored network if it is already in memory (without loading it).
+pub fn loaded(db: &Db) -> Option<Arc<RoutingNet>> {
     let el = db.reader.element(knut_format::container::ElementKind::RoutingNetwork)?;
     let s = el.sections.first()?;
-    let mut c = CACHE.lock().ok()?;
+    NETS.lock().ok()?.iter().find(|x| x.0 == db.path && x.1 == s.checksum).map(|x| x.2.clone())
+}
+
+pub fn load(db: &Db) -> Option<Arc<RoutingNet>> {
+    let el = db.reader.element(knut_format::container::ElementKind::RoutingNetwork)?;
+    let s = el.sections.first()?;
+    let mut c = NETS.lock().ok()?;
     if let Some(x) = c.iter().find(|x| x.0 == db.path && x.1 == s.checksum) {
         return Some(x.2.clone());
     }

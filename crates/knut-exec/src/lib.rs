@@ -20,6 +20,7 @@ pub mod fields;
 pub mod geocode;
 pub mod geojson;
 pub mod indexes;
+pub mod load;
 pub mod kdtree;
 pub mod geom;
 pub mod net;

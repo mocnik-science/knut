@@ -66,9 +66,8 @@ pub struct WebOptions {
     pub llm: Option<String>,
     /// Model name sent to that server.
     pub llm_model: Option<String>,
-    /// Load all indexes of the default database before the first request (else each one is
-    /// loaded by the first query that needs it).
-    pub preload: bool,
+    /// What to load before the first request (see `knut_exec::load`).
+    pub load: knut_exec::load::Mode,
     /// Let /performance store new target times also when the page is opened from another
     /// computer (from this one it always may).
     pub allow_performance_persist: bool,
@@ -174,11 +173,15 @@ pub fn serve(opts: WebOptions) -> Result<(), String> {
     // open the default database now, so that the first run is fast
     if let Some(d) = &state.default_db
         && let Some(db) = state.db(d)
-        && opts.preload
     {
         let t = Instant::now();
-        knut_exec::indexes::preload(&db, |name, secs| eprintln!("  loaded {name} ({secs:.2} s)"));
-        eprintln!("all indexes loaded ({:.1} s)", t.elapsed().as_secs_f64());
+        eprintln!("loading ({}):", match opts.load {
+            knut_exec::load::Mode::Minimal => "minimal",
+            knut_exec::load::Mode::Preload => "preload",
+            knut_exec::load::Mode::PreloadAll => "preload-all",
+        });
+        knut_exec::load::load(&db, opts.load, |s| report_step(s));
+        eprintln!("ready ({:.1} s)", t.elapsed().as_secs_f64());
     }
     for req in server.incoming_requests() {
         let st = state.clone();
@@ -365,6 +368,15 @@ fn handle(st: &State, mut req: Request) {
             }
         }
         _ => send(req, 404, "text/plain; charset=utf-8", "not found".into()),
+    }
+}
+
+/// One line per part loaded ahead (or left to the queries).
+pub fn report_step(s: &knut_exec::load::Step) {
+    let size = if s.bytes >= 1 << 30 { format!("{:.1} GB", s.bytes as f64 / 1e9) } else { format!("{} MB", s.bytes.div_ceil(1 << 20)) };
+    match &s.skipped {
+        None => eprintln!("  [{}] {} ({size}, {:.2} s)", s.category.letter(), s.name, s.seconds),
+        Some(why) => eprintln!("  [{}] {} ({size}): {why}", s.category.letter(), s.name),
     }
 }
 
