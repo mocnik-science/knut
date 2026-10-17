@@ -79,6 +79,13 @@ impl GeoIndex {
         let mut r = 0usize;
         let (cx, cy) = ((p.0 / self.cell).floor() as i32, (p.1 / self.cell).floor() as i32);
         let max_r = 400usize;
+        // distances are measured to `g`, not to `p`: an item outside the rings may still lie up
+        // to the reach of `g` around `p` closer
+        let b = g.bbox();
+        let reach = [(b.minx, b.miny), (b.minx, b.maxy), (b.maxx, b.miny), (b.maxx, b.maxy)]
+            .into_iter()
+            .map(|q| geom::haversine(p, q))
+            .fold(0.0, f64::max);
         while r <= max_r {
             let ri = r as i32;
             let mut seen_any = false;
@@ -109,7 +116,7 @@ impl GeoIndex {
             if let Some((_, bd)) = best {
                 // all closer items lie within the searched rings
                 let ring_m = (r as f64) * self.cell * 111_000.0 * p.1.to_radians().cos().max(0.1);
-                if bd <= ring_m {
+                if bd + reach <= ring_m {
                     break;
                 }
             }
