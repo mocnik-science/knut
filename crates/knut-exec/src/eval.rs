@@ -85,7 +85,12 @@ impl Ctx {
             walk_static(p, &mut |x| {
                 let target: Option<&'static Expr> = match &x.kind {
                     ExprKind::Rel(_, RelTail::Near { set, .. }) => Some(set),
-                    ExprKind::Of { func: OfFunc::Nearest, operand: OfOperand::Expr(set), clauses, .. } if clauses.mode.is_none() => Some(set),
+                    // (not a selection with `to`: it is searched around each place first)
+                    ExprKind::Of { func: OfFunc::Nearest, operand: OfOperand::Expr(set), clauses, .. }
+                        if clauses.mode.is_none() && !(matches!(set.kind, ExprKind::Select(_)) && clauses.to.is_some()) =>
+                    {
+                        Some(set)
+                    }
                     ExprKind::Rel(_, RelTail::Within(r)) | ExprKind::Rel(_, RelTail::Overlapping(r)) | ExprKind::Rel(_, RelTail::In(r)) => Some(r),
                     _ => None,
                 };

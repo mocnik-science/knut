@@ -437,78 +437,171 @@ pub struct Snap {
 
 /// The nearest way usable by the mode, found by a scan of the ways around the point.
 pub fn snap(db: &Db, net: &RoutingNet, p: P, m: Mode) -> Option<Snap> {
-    // the same point is often attached again (several isochrones or routes from it)
-    type Key = (std::path::PathBuf, usize, u64, u64, usize);
-    static CACHE: std::sync::Mutex<Vec<(Key, Option<Snap>)>> = std::sync::Mutex::new(Vec::new());
-    let key: Key = (db.path.clone(), net.n(), p.0.to_bits(), p.1.to_bits(), mode_idx(m));
-    if let Some(x) = CACHE.lock().ok().and_then(|c| c.iter().find(|x| x.0 == key).map(|x| x.1.clone())) {
+    if let Some(x) = snap_cached(db, net, p, m) {
         return x;
     }
     let found = snap_scan(db, net, p, m);
-    if let Ok(mut c) = CACHE.lock() {
-        if c.len() >= 256 {
-            c.remove(0);
-        }
-        c.push((key, found.clone()));
-    }
+    snap_store(db, net, p, m, found.clone());
     found
 }
 
+// the same point is often attached again (several isochrones or routes from it)
+type SnapKey = (std::path::PathBuf, usize, u64, u64, usize);
+static SNAPS: std::sync::Mutex<Vec<(SnapKey, Option<Snap>)>> = std::sync::Mutex::new(Vec::new());
+
+fn snap_key(db: &Db, net: &RoutingNet, p: P, m: Mode) -> SnapKey {
+    (db.path.clone(), net.n(), p.0.to_bits(), p.1.to_bits(), mode_idx(m))
+}
+
+fn snap_cached(db: &Db, net: &RoutingNet, p: P, m: Mode) -> Option<Option<Snap>> {
+    let key = snap_key(db, net, p, m);
+    SNAPS.lock().ok().and_then(|c| c.iter().find(|x| x.0 == key).map(|x| x.1.clone()))
+}
+
+fn snap_store(db: &Db, net: &RoutingNet, p: P, m: Mode, s: Option<Snap>) {
+    if let Ok(mut c) = SNAPS.lock() {
+        if c.len() >= 256 {
+            c.remove(0);
+        }
+        c.push((snap_key(db, net, p, m), s));
+    }
+}
+
 fn snap_scan(db: &Db, net: &RoutingNet, p: P, m: Mode) -> Option<Snap> {
-    let mi = mode_idx(m);
-    let mut r = 250.0;
-    while r <= 20_000.0 {
-        let mut bb = BBoxF::EMPTY;
-        bb.add(p);
-        let spec = ScanSpec {
-            bbox: None,
-            kinds: KindMask { way: true, ..Default::default() },
-            time: TimeMode::State(db.latest),
-            region: Some(Arc::new(Region::Box(bb.expand_m(r)))),
-            pred: TagPred::Has("highway".into()),
-            need_geom: true,
-            need_hist: false,
-            attrs_history: false,
-        };
-        let found = scan::fold(db, None, &spec, &Vec::new, &|acc: &mut Vec<(f64, i64, usize, P)>, it: Item| {
-            let Item::Elem(e) = it else { return Ok(()) };
-            if profile(&e).is_none_or(|pr| pr.speed[mi] <= 0.0) {
-                return Ok(());
-            }
-            let Some(g) = e.geom.get() else { return Ok(()) };
-            let Geom::Line(line) = &**g else { return Ok(()) };
-            if line.len() != e.v.nodes.len() {
-                return Ok(());
-            }
-            for k in 0..line.len().saturating_sub(1) {
-                let q = project(p, line[k], line[k + 1]);
-                acc.push((geom::haversine(p, q), e.id, k, q));
-            }
-            Ok(())
+    snap_scan_many(db, net, &[p], m).pop().flatten()
+}
+
+/// Segments of usable ways within `r` of each point (distance, way, segment, projected
+/// point), and the line of every way found: one scan over small boxes around the points.
+type Seg = (f64, i64, usize, P);
+fn near_segments(db: &Db, pts: &[P], r: f64, mi: usize) -> Option<(Vec<Vec<Seg>>, rustc_hash::FxHashMap<i64, Arc<Vec<P>>>)> {
+    let boxes: Vec<BBoxF> = pts
+        .iter()
+        .map(|p| {
+            let mut b = BBoxF::EMPTY;
+            b.add(*p);
+            b.expand_m(r)
         })
-        .ok()?;
-        let mut cands: Vec<(f64, i64, usize, P)> = found.into_iter().flatten().filter(|c| c.0 <= r).collect();
-        cands.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        for (d, id, k, q) in cands {
-            let Some(w) = net.way_index(id) else { continue };
-            let js = net.way_junctions(w);
-            let Some(b) = js.iter().rev().find(|x| x.0 as usize <= k) else { continue };
-            let Some(a) = js.iter().find(|x| x.0 as usize > k) else { continue };
-            if !net.well_connected(b.1, m) && !net.well_connected(a.1, m) {
+        .collect();
+    let mut all = BBoxF::EMPTY;
+    for b in &boxes {
+        all.union(b);
+    }
+    let region = if boxes.len() == 1 {
+        Region::Box(boxes[0])
+    } else {
+        Region::Union(crate::region::Union::new(boxes.iter().map(|b| Arc::new(Region::Box(*b))).collect(), all, String::new()))
+    };
+    let spec = ScanSpec {
+        bbox: None,
+        kinds: KindMask { way: true, ..Default::default() },
+        time: TimeMode::State(db.latest),
+        region: Some(Arc::new(region)),
+        pred: TagPred::Has("highway".into()),
+        need_geom: true,
+        need_hist: false,
+        attrs_history: false,
+    };
+    type Acc = (Vec<(usize, Seg)>, Vec<(i64, Arc<Vec<P>>)>);
+    let found = scan::fold(db, None, &spec, &|| (Vec::new(), Vec::new()), &|acc: &mut Acc, it: Item| {
+        let Item::Elem(e) = it else { return Ok(()) };
+        if profile(&e).is_none_or(|pr| pr.speed[mi] <= 0.0) {
+            return Ok(());
+        }
+        let Some(g) = e.geom.get() else { return Ok(()) };
+        let Geom::Line(line) = &**g else { return Ok(()) };
+        if line.len() != e.v.nodes.len() {
+            return Ok(());
+        }
+        let wb = g.bbox();
+        let mut used = false;
+        for (i, p) in pts.iter().enumerate() {
+            if !boxes[i].intersects(&wb) {
                 continue;
             }
-            // metres along the way: from the junction before to the point, and on
-            let geo = db.way_geoms(&[(id, db.latest)]);
-            let Some(Some((_, pts))) = geo.get(&(id, db.latest)) else { continue };
-            let pts: Vec<P> = pts.iter().map(|x| x.unwrap_or(q)).collect();
-            let along = |from: usize, to: usize| (from..to).map(|i| geom::haversine(pts[i], pts[i + 1])).sum::<f64>();
-            let db_ = along(b.0 as usize, k) + geom::haversine(pts[k], q);
-            let da = geom::haversine(q, pts[k + 1]) + along(k + 1, a.0 as usize);
-            return Some(Snap { way: w, point: q, dist: d, seg: k, before: (b.1, b.0, db_), after: (a.1, a.0, da) });
+            for k in 0..line.len().saturating_sub(1) {
+                let q = project(*p, line[k], line[k + 1]);
+                let d = geom::haversine(*p, q);
+                if d <= r {
+                    acc.0.push((i, (d, e.id, k, q)));
+                    used = true;
+                }
+            }
         }
-        r *= 4.0;
+        if used {
+            acc.1.push((e.id, Arc::new(line.to_vec())));
+        }
+        Ok(())
+    })
+    .ok()?;
+    let mut per: Vec<Vec<Seg>> = vec![Vec::new(); pts.len()];
+    let mut lines = rustc_hash::FxHashMap::default();
+    for (segs, ls) in found {
+        for (i, c) in segs {
+            per[i].push(c);
+        }
+        lines.extend(ls);
+    }
+    Some((per, lines))
+}
+
+/// The snap from the nearest suitable segment (on a way of the network, at a junction that is
+/// well connected), or none among these segments.
+fn choose_snap(net: &RoutingNet, mut cands: Vec<Seg>, lines: &rustc_hash::FxHashMap<i64, Arc<Vec<P>>>, m: Mode) -> Option<Snap> {
+    cands.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+    for (d, id, k, q) in cands {
+        let Some(w) = net.way_index(id) else { continue };
+        let js = net.way_junctions(w);
+        let Some(b) = js.iter().rev().find(|x| x.0 as usize <= k) else { continue };
+        let Some(a) = js.iter().find(|x| x.0 as usize > k) else { continue };
+        if !net.well_connected(b.1, m) && !net.well_connected(a.1, m) {
+            continue;
+        }
+        // metres along the way: from the junction before to the point, and on
+        let Some(pts) = lines.get(&id) else { continue };
+        let along = |from: usize, to: usize| (from..to).map(|i| geom::haversine(pts[i], pts[i + 1])).sum::<f64>();
+        let db_ = along(b.0 as usize, k) + geom::haversine(pts[k], q);
+        let da = geom::haversine(q, pts[k + 1]) + along(k + 1, a.0 as usize);
+        return Some(Snap { way: w, point: q, dist: d, seg: k, before: (b.1, b.0, db_), after: (a.1, a.0, da) });
     }
     None
+}
+
+/// The snaps of several points with one scan per round (the radius grows for the points
+/// still without one).
+pub fn snap_scan_many(db: &Db, net: &RoutingNet, pts: &[P], m: Mode) -> Vec<Option<Snap>> {
+    let mi = mode_idx(m);
+    let mut out: Vec<Option<Snap>> = vec![None; pts.len()];
+    let mut todo: Vec<usize> = (0..pts.len()).collect();
+    let mut r = 250.0;
+    while r <= 20_000.0 && !todo.is_empty() {
+        let ps: Vec<P> = todo.iter().map(|&i| pts[i]).collect();
+        let Some((per, lines)) = near_segments(db, &ps, r, mi) else { break };
+        let mut left = Vec::new();
+        for (j, cands) in per.into_iter().enumerate() {
+            match choose_snap(net, cands, &lines, m) {
+                Some(s) => out[todo[j]] = Some(s),
+                None => left.push(todo[j]),
+            }
+        }
+        todo = left;
+        r *= 4.0;
+    }
+    out
+}
+
+/// Snaps of several points (cached like `snap`).
+pub fn snap_many(db: &Db, net: &RoutingNet, pts: &[P], m: Mode) -> Vec<Option<Snap>> {
+    let mut out: Vec<Option<Option<Snap>>> = pts.iter().map(|&p| snap_cached(db, net, p, m)).collect();
+    let missing: Vec<usize> = (0..pts.len()).filter(|&i| out[i].is_none()).collect();
+    if !missing.is_empty() {
+        let found = snap_scan_many(db, net, &missing.iter().map(|&i| pts[i]).collect::<Vec<_>>(), m);
+        for (k, s) in missing.into_iter().zip(found) {
+            snap_store(db, net, pts[k], m, s.clone());
+            out[k] = Some(s);
+        }
+    }
+    out.into_iter().map(|x| x.flatten()).collect()
 }
 
 fn project(p: P, a: P, b: P) -> P {

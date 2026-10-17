@@ -35,6 +35,9 @@ pub struct Caches {
     pub geo: Mutex<HashMap<usize, (Arc<SetV>, Slot<GeoIndex>)>>,
     pub nets: Mutex<HashMap<String, Slot<Net>>>,
     pub net_nearest: Mutex<HashMap<(usize, u8, u8), (Arc<SetV>, Slot<NetNearest>)>>,
+    /// Per `nearest of SELECTION to x` (by its start in the source): how often it searched
+    /// around a changing `x` (after a number of them, the whole selection is read once).
+    pub nearest_around: Mutex<HashMap<u32, usize>>,
     pub places: Mutex<HashMap<String, R<Value>>>,
     pub cs: OnceLock<R<Arc<CsIndex>>>,
     pub notes: OnceLock<R<Arc<NotesIndex>>>,

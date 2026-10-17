@@ -515,6 +515,12 @@ pub fn nearest_around(ctx: &Ctx, sel: &'static Expr, origin: &Value, mode: Optio
     }
     let extent = ctx.db()?.extent;
     let key = origin.key();
+    // along the stored routing network (as isochrones and paths): one search from `a`
+    if let Some((m, None)) = mode
+        && let Some(v) = nearest_stored(ctx, sel, origin, &g, m, sc)?
+    {
+        return Ok(Some(v));
+    }
     let mut r = 1000.0;
     loop {
         let bx = ob.expand_m(r);
@@ -550,6 +556,71 @@ pub fn nearest_around(ctx: &Ctx, sel: &'static Expr, origin: &Value, mode: Optio
         // (measured on germany.knutdb: 3 is as good as 2 and 4 in a straight line, and the best
         // compromise along the network, where 4 overshoots and 2 loads the network too often)
         r *= 3.0;
+    }
+}
+
+/// `nearest of SELECTION to a by MODE` in the stored routing network: a search from `a`
+/// bounded by a time limit; the matches are read in the box that the limit can reach at the
+/// highest speed. Done when the nearest match is reached within the limit (anything reached
+/// later is farther); else the limit triples. `None` without a stored network.
+fn nearest_stored(ctx: &Ctx, sel: &'static Expr, origin: &Value, g: &Geom, m: Mode, sc: &Sc) -> R<Option<Value>> {
+    let db = ctx.db()?;
+    let Some(net) = crate::routing::load(db) else { return Ok(None) };
+    let Some(p) = ctx.rep_point(origin) else { return Ok(Some(Value::None)) };
+    let Some(s) = crate::routing::snap(db, &net, p, m) else { return Ok(Some(Value::None)) };
+    let sources = crate::routing::entries(&net, &s, m, true);
+    let vmax = net.max_speed(m).max(0.1);
+    let ob = g.bbox();
+    let key = origin.key();
+    // the first limit reaches 1 km at the highest speed
+    let mut limit = 1000.0 / vmax;
+    loop {
+        let bx = ob.expand_m(limit * vmax);
+        let whole = bx.contains_box(&db.extent);
+        let Some(v) = ctx.select_in_box(sel, sc, bx)? else { return Ok(None) };
+        let set = ctx.as_set(&v, sel.span)?;
+        let items = set.items(ctx, Hints { geom: true, ..Default::default() })?;
+        // nearest in a straight line first: a match d away takes at least d / vmax
+        let mut cands: Vec<(f64, usize, P)> = Vec::new();
+        for (i, it) in items.iter().enumerate() {
+            if it.key() == key {
+                continue;
+            }
+            let Some(q) = ctx.rep_point(it) else { continue };
+            cands.push((geom::haversine(p, q), i, q));
+        }
+        cands.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let lim = if whole { f64::INFINITY } else { limit };
+        let dist = match crate::routing::reach_bounded(&net, &sources, m, lim, usize::MAX) {
+            Some((d, _)) => d,
+            None => crate::routing::reach(&net, &sources, m, lim),
+        };
+        // (times in tenths of seconds, as in the network). Attached to the network in groups,
+        // nearest in a straight line first (one scan per group); the rest is left out once
+        // even at the highest speed it cannot be faster than the best so far.
+        let near: Vec<(f64, usize, P)> = cands.iter().copied().filter(|c| c.0 / vmax <= lim).collect();
+        let mut best: Option<(f64, usize)> = None;
+        for group in near.chunks(8) {
+            if best.is_some_and(|b| group[0].0 / vmax * 10.0 >= b.0) {
+                break;
+            }
+            let snaps = crate::routing::snap_many(db, &net, &group.iter().map(|c| c.2).collect::<Vec<_>>(), m);
+            for (&(d, i, _), t) in group.iter().zip(&snaps) {
+                if best.is_some_and(|b| d / vmax * 10.0 >= b.0) {
+                    break;
+                }
+                let Some(t) = t else { continue };
+                let secs = crate::routing::entries(&net, t, m, false).iter().map(|&(n, c)| dist[n as usize] + c).fold(f64::INFINITY, f64::min);
+                if secs.is_finite() && best.is_none_or(|b| secs < b.0) {
+                    best = Some((secs, i));
+                }
+            }
+        }
+        match best {
+            Some((secs, i)) if whole || secs <= limit * 10.0 => return Ok(Some(items[i].clone())),
+            None if whole => return Ok(Some(Value::None)),
+            _ => limit *= 3.0,
+        }
     }
 }
 
