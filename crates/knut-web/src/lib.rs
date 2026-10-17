@@ -38,6 +38,8 @@ const DOCS: &str = include_str!("../assets/docs.html");
 const LOGO: &str = include_str!("../assets/knut.svg");
 const LOADER: &str = include_str!("../assets/knut-loading.svg");
 const ICON: &str = include_str!("../assets/icon.svg");
+const PERFORMANCE: &str = include_str!("../assets/performance.html");
+const PERFORMANCE_TESTS: &str = include_str!("../assets/performance.json");
 const ICONS: [(&str, &[u8]); 4] = [
     ("/icon-32.png", include_bytes!("../assets/icon-32.png")),
     ("/icon-180.png", include_bytes!("../assets/icon-180.png")),
@@ -64,6 +66,12 @@ pub struct WebOptions {
     pub llm: Option<String>,
     /// Model name sent to that server.
     pub llm_model: Option<String>,
+    /// Load all indexes of the default database before the first request (else each one is
+    /// loaded by the first query that needs it).
+    pub preload: bool,
+    /// Let /performance store new target times also when the page is opened from another
+    /// computer (from this one it always may).
+    pub allow_performance_persist: bool,
 }
 
 /// The examples shown in the page: `[{title, description, code}]`.
@@ -95,6 +103,7 @@ struct State {
     jobs: Mutex<HashMap<u64, Arc<Job>>>,
     next: AtomicU64,
     model: Option<Arc<dyn chat::Model>>,
+    allow_performance_persist: bool,
 }
 
 impl State {
@@ -159,11 +168,17 @@ pub fn serve(opts: WebOptions) -> Result<(), String> {
         dbs: Mutex::new(HashMap::new()),
         jobs: Mutex::new(HashMap::new()),
         next: AtomicU64::new(1),
+        allow_performance_persist: opts.allow_performance_persist,
         model: llm.map(|url| Arc::new(chat::HttpModel::new(url, opts.llm_model.unwrap_or_else(|| "qwen3:1.7b".into()))) as Arc<dyn chat::Model>),
     });
     // open the default database now, so that the first run is fast
-    if let Some(d) = &state.default_db {
-        let _ = state.db(d);
+    if let Some(d) = &state.default_db
+        && let Some(db) = state.db(d)
+        && opts.preload
+    {
+        let t = Instant::now();
+        knut_exec::indexes::preload(&db, |name, secs| eprintln!("  loaded {name} ({secs:.2} s)"));
+        eprintln!("all indexes loaded ({:.1} s)", t.elapsed().as_secs_f64());
     }
     for req in server.incoming_requests() {
         let st = state.clone();
@@ -229,12 +244,37 @@ fn send_json(req: Request, status: u16, v: &J) {
 fn handle(st: &State, mut req: Request) {
     let url = req.url().split('?').next().unwrap_or("/").to_string();
     match (req.method(), url.as_str()) {
-        (Method::Get, "/") | (Method::Get, "/index.html") => send(req, 200, "text/html; charset=utf-8", INDEX.to_string()),
+        (Method::Get, "/") | (Method::Get, "/index.html") | (Method::Get, "/advanced") => send(req, 200, "text/html; charset=utf-8", INDEX.to_string()),
         (Method::Get, "/app.js") => send(req, 200, "text/javascript; charset=utf-8", APP_JS.to_string()),
         (Method::Get, "/editor.js") => send(req, 200, "text/javascript; charset=utf-8", EDITOR_JS.to_string()),
         (Method::Get, "/app.css") => send(req, 200, "text/css; charset=utf-8", APP_CSS.to_string()),
         (Method::Get, "/examples.json") => send(req, 200, "application/json; charset=utf-8", EXAMPLES.to_string()),
         (Method::Get, "/docs.html") => send(req, 200, "text/html; charset=utf-8", DOCS.to_string()),
+        (Method::Get, "/performance") | (Method::Get, "/performance.html") => send(req, 200, "text/html; charset=utf-8", PERFORMANCE.to_string()),
+        (Method::Get, "/performance.json") => send(req, 200, "application/json; charset=utf-8", PERFORMANCE_TESTS.to_string()),
+        // the target times of /performance: next to the database they were measured on
+        (Method::Get, "/api/performance/targets") => match targets_path(st) {
+            Some(p) => {
+                let v = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<J>(&t).ok()).unwrap_or(J::Null);
+                let writable = may_persist(st, &req);
+                send_json(req, 200, &json!({ "path": p.display().to_string(), "targets": v, "writable": writable }))
+            }
+            None => send_json(req, 404, &json!({ "error": "no database (start knut web with a database)" })),
+        },
+        (Method::Post, "/api/performance/targets") => {
+            if !may_persist(st, &req) {
+                return send_json(req, 403, &json!({ "error": "targets can only be stored from this computer (or start knut web with --allow-performance-persist)" }));
+            }
+            let mut body = String::new();
+            let _ = req.as_reader().take(4 << 20).read_to_string(&mut body);
+            let (Some(p), Ok(v)) = (targets_path(st), serde_json::from_str::<J>(&body)) else {
+                return send_json(req, 400, &json!({ "error": "no database or no valid JSON" }));
+            };
+            match std::fs::write(&p, serde_json::to_string_pretty(&v).unwrap_or_default() + "\n") {
+                Ok(()) => send_json(req, 200, &json!({ "path": p.display().to_string() })),
+                Err(e) => send_json(req, 500, &json!({ "error": e.to_string() })),
+            }
+        }
         (Method::Get, "/knut.svg") => send_bytes(req, "image/svg+xml", LOGO.as_bytes()),
         (Method::Get, "/knut-loading.svg") => send_bytes(req, "image/svg+xml", LOADER.as_bytes()),
         (Method::Get, "/icon.svg") => send_bytes(req, "image/svg+xml", ICON.as_bytes()),
@@ -326,6 +366,19 @@ fn handle(st: &State, mut req: Request) {
         }
         _ => send(req, 404, "text/plain; charset=utf-8", "not found".into()),
     }
+}
+
+/// Target times are stored from this computer, from others only when allowed at the start.
+fn may_persist(st: &State, req: &Request) -> bool {
+    st.allow_performance_persist || req.remote_addr().is_some_and(|a| a.ip().is_loopback())
+}
+
+/// `germany.knutdb` → `germany.knutdb.performance.json`
+fn targets_path(st: &State) -> Option<PathBuf> {
+    let db = st.default_db.as_ref()?;
+    let mut name = db.file_name()?.to_os_string();
+    name.push(".performance.json");
+    Some(db.with_file_name(name))
 }
 
 fn info(st: &State) -> J {

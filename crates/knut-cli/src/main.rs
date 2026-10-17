@@ -150,6 +150,10 @@ struct WebArgs {
     /// …) at the start, so that no query has to wait for them
     #[arg(long)]
     preload: bool,
+    /// Let the page /performance store new target times also when opened from another computer
+    /// (from this one it always may)
+    #[arg(long)]
+    allow_performance_persist: bool,
 }
 
 #[derive(Args)]
@@ -513,7 +517,7 @@ fn run(cli: Cli) -> Result<(), String> {
     match cli.cmd {
         Cmd::Run(_) => unreachable!(),
         Cmd::Index { what } => index(what),
-        Cmd::Web(a) => knut_web::serve(knut_web::WebOptions { db: a.db, host: a.host, port: a.port, open: !a.no_open, style: a.style, llm: a.llm, llm_model: a.llm_model, preload: a.preload }),
+        Cmd::Web(a) => knut_web::serve(knut_web::WebOptions { db: a.db, host: a.host, port: a.port, open: !a.no_open, style: a.style, llm: a.llm, llm_model: a.llm_model, preload: a.preload, allow_performance_persist: a.allow_performance_persist }),
         Cmd::Build(a) => build(a),
         Cmd::Info { file, detailed, users } => info(&file, detailed, users),
         Cmd::Search { file, text, limit } => search(&file, &text, limit),

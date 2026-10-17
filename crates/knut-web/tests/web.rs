@@ -76,7 +76,7 @@ fn json_of(port: u16, method: &str, path: &str, body: Option<&J>) -> J {
 fn http_interface() {
     let db = small_db();
     let port = 18_000 + (std::process::id() % 2000) as u16;
-    let opts = knut_web::WebOptions { db: Some(db.clone()), host: "127.0.0.1".parse().unwrap(), port, open: false, style: None, llm: None, llm_model: None };
+    let opts = knut_web::WebOptions { db: Some(db.clone()), host: "127.0.0.1".parse().unwrap(), port, open: false, style: None, llm: None, llm_model: None, preload: false, allow_performance_persist: false };
     std::thread::spawn(move || knut_web::serve(opts).unwrap());
     // wait for the server
     let t0 = Instant::now();

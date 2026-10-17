@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>knut performance</title>
+<link rel="icon" type="image/png" sizes="32x32" href="icon-32.png">
+<style>
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f4f5f7;
+  --bg-code: #f7f7f9;
+  --fg: #1d2129;
+  --fg-soft: #5d6470;
+  --border: #d9dce1;
+  --accent: #feaf3a;
+  --slow: #c93a3a;
+  --slow-bg: rgba(201, 58, 58, 0.12);
+  --fast: #2e8540;
+  --fast-bg: rgba(46, 133, 64, 0.12);
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1c1f24;
+  --bg-soft: #24282f;
+  --bg-code: #16191d;
+  --fg: #e4e6ea;
+  --fg-soft: #9aa1ac;
+  --border: #353a43;
+  --slow: #ef6b6b;
+  --slow-bg: rgba(239, 107, 107, 0.16);
+  --fast: #5cbf73;
+  --fast-bg: rgba(92, 191, 115, 0.16);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #1c1f24;
+    --bg-soft: #24282f;
+    --bg-code: #16191d;
+    --fg: #e4e6ea;
+    --fg-soft: #9aa1ac;
+    --border: #353a43;
+    --slow: #ef6b6b;
+    --slow-bg: rgba(239, 107, 107, 0.16);
+    --fast: #5cbf73;
+    --fast-bg: rgba(92, 191, 115, 0.16);
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 var(--sans); }
+main { max-width: 1100px; margin: 0 auto; padding: 28px 16px 80px; }
+header { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 22px; }
+header img { height: 52px; }
+header h1 { margin: 0; font-size: 15px; font-weight: 600; color: var(--fg-soft); letter-spacing: .04em; text-transform: uppercase; }
+.bar { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: 10px 0; border-bottom: 1px solid var(--border); margin-bottom: 18px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+button { font: inherit; border: 1px solid var(--border); background: var(--bg-soft); color: var(--fg); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--fg-soft); }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #1d2129; font-weight: 600; }
+button.small { padding: 1px 8px; font-size: 12px; }
+.meta { color: var(--fg-soft); font-size: 12px; }
+.grow { flex: 1; }
+.summary { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: var(--bg-soft); color: var(--fg-soft); white-space: nowrap; }
+.chip.slow { background: var(--slow-bg); color: var(--slow); font-weight: 600; }
+.chip.fast { background: var(--fast-bg); color: var(--fast); font-weight: 600; }
+.now { font-size: 12px; color: var(--fg-soft); min-height: 18px; margin: -8px 0 12px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.note { color: var(--fg-soft); font-size: 13px; margin: 0 0 18px; }
+.note code { word-break: break-all; }
+section { margin-bottom: 26px; }
+/* indented as far as the text in the tables (border + cell padding) */
+section > h2 { display: flex; align-items: center; gap: 10px; font-size: 16px; margin: 0 0 8px; padding: 0 9px 0 11px; }
+section > h2 > button { margin-left: auto; }
+section > h2 .meta { font-weight: 400; }
+.card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.card table { table-layout: fixed; }
+/* fixed widths: the columns do not move while tests run or when they are done */
+th.w-med { width: 250px; } th.w-warm { width: 80px; } th.w-size { width: 90px; } th.w-k { width: 64px; }
+th.w-target { width: 80px; } th.w-delta { width: 70px; } th.w-run { width: 48px; }
+td { overflow: hidden; text-overflow: ellipsis; }
+table { width: 100%; border-collapse: collapse; }
+td, th { padding: 6px 10px; text-align: left; vertical-align: top; border-top: 1px solid var(--border); }
+tr:first-child > td, tr:first-child > th { border-top: none; }
+th { font-size: 11px; font-weight: 600; color: var(--fg-soft); text-transform: uppercase; letter-spacing: .03em; background: var(--bg-soft); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.title .id { color: var(--fg-soft); font-size: 11px; font-family: var(--mono); }
+td.title .name { cursor: pointer; }
+td.title .name:hover { text-decoration: underline dotted; }
+pre.code { margin: 6px 0 0; padding: 6px 8px; background: var(--bg-code); border-radius: 6px; font: 12px/1.4 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.runs { color: var(--fg-soft); font-size: 11px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 17px; height: 17px; }
+.median { display: block; line-height: 21px; height: 21px; white-space: nowrap; }
+td.title .name { display: block; }
+td.title .id { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+td.run { overflow: visible; text-overflow: clip; padding-left: 0; padding-right: 8px; text-align: right; }
+.median { font-weight: 600; font-size: 15px; }
+/* two lines of fixed height on both sides: rows keep their height while tests run */
+td.title .name { line-height: 21px; }
+td.title .id { line-height: 17px; }
+td { line-height: 21px; }
+tr.slow > td { background: var(--slow-bg); }
+tr.slow .delta, tr.slow .median { color: var(--slow); }
+tr.fast > td { background: var(--fast-bg); }
+tr.fast .delta, tr.fast .median { color: var(--fast); }
+tr.running .median { color: var(--accent); }
+.ico { width: 12px; height: 12px; display: block; }
+td.run button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 22px; padding: 0; }
+td.run button.busy { color: var(--accent); opacity: 1; }
+.spin { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* the same width whatever the label says (Run group / Waiting… / Running…) */
+button.batch, #run-series { min-width: 104px; }
+.delta { font-weight: 600; }
+.runs.err { color: var(--slow); }
+.series { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 0; align-items: start; }
+.series .plot { align-self: stretch; background: var(--bg-soft); border-right: 1px solid var(--border); }
+.series svg { display: block; width: 100%; height: auto; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 0 10px 8px; font-size: 11px; color: var(--fg-soft); }
+.legend i { display: inline-block; width: 18px; height: 0; vertical-align: middle; margin-right: 5px; }
+.legend i.dash { border-top: 1.5px dashed var(--fg-soft); }
+.legend i.line { border-top: 2px solid var(--accent); }
+.series-card .head { padding: 8px 8px 8px 10px; border-bottom: 1px solid var(--border); }
+.series-card .head .line { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 24px; }
+/* fixed slots: overhead, verdict and size stand at the same place in every series */
+.series-card .head .facts { justify-content: flex-start; gap: 0; margin-top: 2px; }
+.series-card .head .slot { flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.series-card .head .slot.overhead { width: 130px; }
+.series-card .head .slot.verdict-slot { width: 270px; }
+.series-card .head b { font-size: 14px; }
+.verdict { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: var(--bg-soft); }
+.verdict.linear { background: rgba(127, 127, 127, .15); }
+.verdict.sub { background: var(--fast-bg); color: var(--fast); }
+.verdict.super { background: var(--slow-bg); color: var(--slow); font-weight: 600; }
+@media (max-width: 700px) {
+  .series { grid-template-columns: 1fr; }
+  .series .plot { border-right: none; border-bottom: 1px solid var(--border); }
+  .series-card .head .slot.overhead { width: 110px; }
+  .series-card .head .slot.verdict-slot { width: auto; }
+  .series-card .head .facts { flex-wrap: wrap; row-gap: 4px; }
+  .series-card .head .slot { overflow: visible; }
+  .hide-narrow { display: none; }
+  th.w-med { width: 76px; } th.w-target { width: 64px; } th.w-delta { width: 54px; } th.w-run { width: 36px; }
+}
+@media (max-width: 440px) {
+  .hide-tiny { display: none; }
+  th.w-med { width: 64px; } th.w-delta { width: 50px; }
+  td, th { padding: 6px 6px; }
+  section > h2 { padding-left: 7px; }
+  .median { font-size: 14px; }
+  .bar { gap: 6px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="knut.svg" alt="knut">
+    <h1>Performance</h1>
+  </header>
+
+  <div class="bar">
+    <button class="primary" id="run-all">Run all</button>
+    <button id="stop" disabled>Stop</button>
+    <button id="save" title="Store the medians measured now as the reference; the target is 10 % above">Persist as targets</button>
+    <button id="clear">Clear results</button>
+    <span class="grow"></span>
+    <div class="summary" id="summary"></div>
+  </div>
+  <div class="now" id="now"></div>
+  <p class="note" id="info"></p>
+
+  <div id="groups"></div>
+
+  <section>
+    <h2>Scaling <span class="meta">how the time grows with the size of the input</span><button class="small" id="run-series">Run all series</button></h2>
+    <p class="note">Each series runs the same program on growing inputs. The time is fitted as overhead + b·size<sup><i>k</i></sup>, the overhead being the time of the smallest input (parsing, finding the place, …): <i>k</i> ≈ 1 is linear, below is sublinear (indexes, boxes), above is superlinear. The dashed line is what linear growth with the same overhead would give, through the largest input; “local k” is the slope between neighbouring inputs.</p>
+    <div id="series"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// ---- theme and accent as in the main page
+const stored = (k, d) => { try { const v = localStorage.getItem("knut-web:" + k); return v === null ? d : JSON.parse(v); } catch (_) { return d; } };
+const keep = (k, v) => { try { localStorage.setItem("knut-web:" + k, JSON.stringify(v)); } catch (_) { /* private mode */ } };
+(() => {
+  const t = stored("theme", "auto");
+  if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  const a = { orange: "#feaf3a", magenta: "#e64fa5", cyan: "#24c1e4" }[stored("accent", "orange")];
+  if (a) document.documentElement.style.setProperty("--accent", a);
+})();
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+// below 1 s in ms, else in s
+const fmt = s => s == null ? "–" : s < 1 ? (s * 1000).toFixed(0) + " ms" : s < 10 ? s.toFixed(2) + " s" : s.toFixed(1) + " s";
+// the single runs in the unit of their median, without it: "48 51 47 50 49 ms"
+function runsText(xs) {
+  const m = median(xs), ms = m < 1;
+  return xs.map(x => ms ? (x * 1000).toFixed(0) : x < 10 ? x.toFixed(2) : x.toFixed(1)).join(" ") + (ms ? " ms" : " s");
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+let suite = null, info = {}, targets = { tests: {} }, targetsPath = "", writable = false;
+let results = stored("performance-results", {});
+let running = false, stopping = false, currentJob = null, openCode = new Set();
+
+// ---- the tests: groups as they are, series expanded into one test per input
+function tests() {
+  const out = [];
+  for (const g of suite.groups) for (const t of g.tests) out.push({ ...t, group: g.name });
+  for (const s of suite.series) s.params.forEach((p, i) => {
+    const inn = p ? " within " + p : "";
+    out.push({
+      id: `${s.id}@${p || "Germany"}`, title: `${s.title}: ${p || "Germany"}`, series: s.id, param: p,
+      code: s.code.replaceAll("{in}", inn).replaceAll("{p}", p),
+      sizeCode: s.size ? s.size.replaceAll("{in}", inn) : null, size: s.sizes ? s.sizes[i] : null,
+    });
+  });
+  return out;
+}
+const byId = id => tests().find(t => t.id === id);
+
+// ---- one run through the server, as the editor does it: the time is the server's
+async function runOnce(code) {
+  const r = await fetch("api/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ script: code }) });
+  const { job, error } = await r.json();
+  if (error) return { error };
+  currentJob = job;
+  const t0 = performance.now();
+  let cancelled = false;
+  try {
+    for (;;) {
+      await sleep(40);
+      const j = await (await fetch(`api/job/${job}`)).json();
+      if (j.state === "done" || j.state === "cancelled") {
+        if (j.state === "cancelled" || j.result?.cancelled) return cancelled ? { timeout: true } : { stopped: true };
+        if (j.result.code !== 0) return { error: (j.result.messages || "failed").trim().split("\n").slice(0, 3).join("\n"), seconds: j.seconds };
+        return { seconds: j.seconds, outputs: j.result.outputs };
+      }
+      const late = (performance.now() - t0) / 1000 > suite.timeout;
+      if ((late || stopping) && !cancelled) {
+        cancelled = late;
+        await fetch(`api/job/${job}/cancel`, { method: "POST" });
+      }
+    }
+  } finally {
+    currentJob = null;
+  }
+}
+
+const median = xs => { const s = [...xs].sort((a, b) => a - b); return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2; };
+const numberOf = o => typeof o?.value === "number" ? o.value : parseFloat(String(o?.text ?? "").replace(/[,\s]/g, ""));
+
+async function measure(t) {
+  const res = { runs: [], at: new Date().toISOString() };
+  results[t.id] = { ...res, running: true };
+  render();
+  if (t.sizeCode) {
+    $("#now").textContent = `${t.id}: size …`;
+    const s = await runOnce(t.sizeCode);
+    if (s.stopped) return delete results[t.id], render();
+    res.size = s.outputs ? numberOf(s.outputs[s.outputs.length - 1]) : null;
+  } else if (t.size != null) res.size = t.size;
+  for (let i = 0; i < suite.warmup + suite.runs; i++) {
+    const warm = i < suite.warmup;
+    $("#now").textContent = `${t.id}: ${warm ? "warm-up" : `run ${i - suite.warmup + 1} of ${suite.runs}`} …`;
+    const r = await runOnce(t.code);
+    if (r.stopped) return delete results[t.id], render();
+    if (r.error || r.timeout) {
+      Object.assign(res, r.timeout ? { timeout: true } : { error: r.error });
+      break;
+    }
+    if (!warm) res.runs.push(r.seconds);
+    else res.warmup = r.seconds;
+    results[t.id] = { ...res, running: true };
+    render();
+  }
+  if (res.runs.length) Object.assign(res, { median: median(res.runs), min: Math.min(...res.runs), max: Math.max(...res.runs) });
+  results[t.id] = res;
+  keep("performance-results", results);
+  render();
+}
+
+// ---- a queue: tests asked for while others run wait their turn
+let queue = [], current = null;
+function runMany(list) {
+  for (const t of list) if (t && t.id !== current && !queue.includes(t.id)) queue.push(t.id);
+  render();
+  if (!running) pump();
+}
+async function pump() {
+  running = true; stopping = false;
+  render();
+  try {
+    while (queue.length && !stopping) {
+      current = queue.shift();
+      await measure(byId(current));
+    }
+  } finally {
+    running = false; stopping = false; current = null; queue = [];
+    $("#now").textContent = "";
+    render();
+  }
+}
+// the label of a button for several tests: what its tests are doing
+function batchLabel(ts, idle) {
+  if (ts.some(t => t.id === current)) return "Running…";
+  if (ts.some(t => queue.includes(t.id))) return "Waiting…";
+  return idle;
+}
+const CLOCK = `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 4.6V8l2.4 1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
+const SPINNER = () => `<svg class="ico spin" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" opacity=".25"/><path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+
+// ---- comparison with the targets: above the target (10 % over the reference) is slower;
+// clearly below the reference (by a fifth, and by more than 20 ms of noise) is faster
+function status(id) {
+  const r = results[id], tg = targets.tests?.[id];
+  if (!r || r.running) return r?.running ? "running" : "none";
+  if (r.error) return "error";
+  if (r.timeout) return tg ? "slow" : "timeout";
+  if (!tg) return "untargeted";
+  if (r.median > tg.target) return "slow";
+  if (r.median < tg.median * 0.8 && tg.median - r.median > 0.02) return "fast";
+  return "ok";
+}
+function delta(id) {
+  const r = results[id], tg = targets.tests?.[id];
+  if (!r || r.median == null || !tg) return "";
+  const d = (r.median / tg.median - 1) * 100;
+  return (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(0) + " %";
+}
+
+function row(t) {
+  const r = results[t.id] || {}, st = status(t.id), tg = targets.tests?.[t.id];
+  const open = openCode.has(t.id);
+  const timeText = r.timeout ? `> ${suite.timeout} s` : r.error ? "error" : fmt(r.median);
+  return `<tr class="${st}">
+    <td class="title"><span class="name" data-code="${esc(t.id)}" title="${esc(t.title)}">${esc(t.series ? t.param || "Germany" : t.title)}</span><span class="id">${esc(t.id)}</span>
+      ${open ? `<pre class="code">${esc(t.code)}</pre>` : ""}
+</td>
+    <td class="num"><span class="median">${r.running && r.median == null ? (r.runs?.length ? fmt(median(r.runs)) : "…") : timeText}</span>
+      <div class="runs${r.error ? " err" : ""}" title="${esc(r.error || "")}">${r.error ? esc(r.error.split("\n")[0]) : r.runs?.length ? runsText(r.runs) : "&nbsp;"}</div></td>
+    <td class="num hide-narrow">${r.warmup != null ? fmt(r.warmup) : "–"}</td>
+    <td class="num hide-tiny">${tg ? fmt(tg.target) : "–"}</td>
+    <td class="num delta">${delta(t.id)}</td>
+    <td class="run">${t.id === current ? `<button class="small busy" title="Running" disabled>${SPINNER()}</button>`
+      : queue.includes(t.id) ? `<button class="small" title="Waiting (click to take it out)" data-unqueue="${esc(t.id)}">${CLOCK}</button>`
+      : `<button class="small" title="Run this test" data-run="${esc(t.id)}">▶</button>`}</td>
+  </tr>`;
+}
+const header = `<tr><th>Test</th><th class="num w-med">Median</th><th class="num hide-narrow w-warm">Warm-up</th><th class="num w-target hide-tiny">Target</th><th class="num w-delta">vs. ref.</th><th class="w-run"></th></tr>`;
+
+// ---- scaling: time = overhead + b · size^k. The overhead (what a run costs even on the
+// smallest input: parsing, the place, the first blocks) is taken as the time of the smallest
+// input; k then comes from least squares in log–log over the rest above it
+function fit(pts) {
+  const p = pts.filter(q => q.x > 0 && q.y > 0).sort((a, b) => a.x - b.x);
+  if (p.length < 3) return null;
+  const o = p[0].y;
+  const q = p.slice(1).filter(v => v.y > 1.5 * o).map(v => [Math.log(v.x), Math.log(v.y - o)]);
+  if (q.length < 2) return { o, k: null, flat: true };
+  const mx = q.reduce((s, v) => s + v[0], 0) / q.length, my = q.reduce((s, v) => s + v[1], 0) / q.length;
+  const sxx = q.reduce((s, v) => s + (v[0] - mx) ** 2, 0), sxy = q.reduce((s, v) => s + (v[0] - mx) * (v[1] - my), 0);
+  if (!(sxx > 0)) return null;
+  return { o, k: sxy / sxx, c: my - (sxy / sxx) * mx, n: q.length };
+}
+function verdict(f) {
+  if (!f) return ["", "not enough points"];
+  if (f.flat) return ["sub", "flat: hardly more than the overhead"];
+  const k = f.k, t = `k = ${k.toFixed(2)}`;
+  if (k < 0.8) return ["sub", `sublinear (${t})`];
+  if (k <= 1.25) return ["linear", `≈ linear (${t})`];
+  if (k <= 1.7) return ["super", `superlinear (${t})`];
+  return ["super", `strongly superlinear (${t})`];
+}
+function plot(pts, f, unit) {
+  const W = 300, H = 200, P = 34;
+  const ok = pts.filter(q => q.x > 0 && q.y > 0).sort((a, b) => a.x - b.x);
+  if (ok.length < 1) return `<svg viewBox="0 0 ${W} ${H}"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" font-size="12" fill="currentColor" opacity=".5">not measured</text></svg>`;
+  const lx = ok.map(q => Math.log10(q.x)), ly = ok.map(q => Math.log10(q.y));
+  let [x0, x1, y0, y1] = [Math.min(...lx), Math.max(...lx), Math.min(...ly), Math.max(...ly)];
+  if (x1 - x0 < 1) { const m = (x0 + x1) / 2; x0 = m - .5; x1 = m + .5; }
+  if (y1 - y0 < 1) { const m = (y0 + y1) / 2; y0 = m - .5; y1 = m + .5; }
+  x0 -= .15; x1 += .15; y0 -= .2; y1 += .2;
+  const X = v => P + (v - x0) / (x1 - x0) * (W - P - 10), Y = v => H - P + 4 - (v - y0) / (y1 - y0) * (H - P - 14);
+  const curve = fn => { const pts = []; for (let i = 0; i <= 40; i++) { const v = x0 + (x1 - x0) * i / 40, y = fn(10 ** v); if (y > 0) pts.push(`${X(v).toFixed(1)},${Y(Math.log10(y)).toFixed(1)}`); } return pts.join(" "); };
+  let g = "";
+  for (let e = Math.ceil(x0); e <= x1; e++) g += `<line x1="${X(e)}" x2="${X(e)}" y1="10" y2="${H - P + 4}" stroke="currentColor" opacity=".1"/><text x="${X(e)}" y="${H - P + 17}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".55">${(10 ** e).toLocaleString("en")}</text>`;
+  for (let e = Math.ceil(y0); e <= y1; e++) g += `<line x1="${P}" x2="${W - 10}" y1="${Y(e)}" y2="${Y(e)}" stroke="currentColor" opacity=".1"/><text x="${P - 4}" y="${Y(e) + 3}" font-size="9" text-anchor="end" fill="currentColor" opacity=".55">${fmt(10 ** e)}</text>`;
+  g += `<g clip-path="url(#clip)">`;
+  if (f && ok.length >= 2) {
+    // linear with the same overhead, through the largest input
+    const last = ok[ok.length - 1], b = Math.max(last.y - f.o, 1e-9) / last.x;
+    g += `<polyline points="${curve(x => f.o + b * x)}" fill="none" stroke="currentColor" opacity=".45" stroke-dasharray="4 3"/>`;
+    if (f.k != null) g += `<polyline points="${curve(x => f.o + Math.exp(f.c) * x ** f.k)}" fill="none" stroke="var(--accent)" stroke-width="2" opacity=".85"/>`;
+  }
+  g += `</g>`;
+  g += lx.map((v, i) => `<circle cx="${X(v)}" cy="${Y(ly[i])}" r="3.5" fill="var(--bg)" stroke="currentColor" stroke-width="1.4"/>`).join("");
+  // the axes at the lower and left edge (on a logarithmic scale there is no 0)
+  const ax = P, ay = H - P + 4;
+  g += `<path d="M${ax},${ay} H${W - 6} M${W - 10},${ay - 3} L${W - 6},${ay} L${W - 10},${ay + 3} M${ax},${ay} V6 M${ax - 3},10 L${ax},6 L${ax + 3},10" fill="none" stroke="currentColor" stroke-width="1" opacity=".7"/>`;
+  g += `<text x="${W - 8}" y="${H - 3}" font-size="9" text-anchor="end" fill="currentColor" opacity=".7">${esc(unit || "size")} (log)</text>`;
+  g += `<text x="${ax + 6}" y="12" font-size="9" fill="currentColor" opacity=".7">time (log)</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="color: var(--fg)"><defs><clipPath id="clip"><rect x="${P}" y="8" width="${W - P - 10}" height="${H - P - 4}"/></clipPath></defs>${g}</svg>
+    <div class="legend"><span><i class="dash"></i>linear (same overhead)</span><span><i class="line"></i>fit: overhead + b·size<sup>k</sup></span></div>`;
+}
+
+function seriesCard(s) {
+  const ts = tests().filter(t => t.series === s.id);
+  const pts = ts.map(t => ({ x: results[t.id]?.size, y: results[t.id]?.median }));
+  const f = fit(pts);
+  const [cls, text] = verdict(f);
+  const rows = ts.map((t, i) => {
+    const r = results[t.id] || {};
+    let local = "";
+    const prev = i > 0 && results[ts[i - 1].id];
+    if (prev && prev.median && r.median && prev.size > 0 && r.size > 0 && r.size !== prev.size)
+      local = (Math.log(r.median / prev.median) / Math.log(r.size / prev.size)).toFixed(2);
+    return row(t).replace(/<td class="num hide-narrow">[^<]*<\/td>/,
+      `<td class="num hide-narrow">${r.size != null && !isNaN(r.size) ? Math.round(r.size).toLocaleString("en") : "–"}</td><td class="num hide-narrow">${local}</td>`);
+  }).join("");
+  return `<section class="card series-card" style="margin-bottom:14px">
+    <div class="head">
+      <div class="line"><b>${esc(s.title)}</b><button class="small batch" data-series="${esc(s.id)}">${batchLabel(ts, "Run series")}</button></div>
+      <div class="line facts"><span class="slot overhead meta">${f ? `overhead ${fmt(f.o)}` : "overhead –"}</span><span class="slot verdict-slot"><span class="verdict ${cls}">${text}</span></span></div>
+    </div>
+    <div class="series"><div class="plot">${plot(pts, f, s.unit)}</div>
+      <table><tr><th>Input</th><th class="num w-med">Median</th><th class="num hide-narrow w-size">Size</th><th class="num hide-narrow w-k">local k</th><th class="num w-target hide-tiny">Target</th><th class="num w-delta">vs. ref.</th><th class="w-run"></th></tr>${rows}</table></div>
+  </section>`;
+}
+
+function render() {
+  if (!suite) return;
+  $("#groups").innerHTML = suite.groups.map(g => {
+    const ts = tests().filter(t => t.group === g.name);
+    return `<section><h2>${esc(g.name)} <button class="small batch" data-group="${esc(g.name)}">${batchLabel(ts, "Run group")}</button></h2>
+      <div class="card"><table>${header}${ts.map(row).join("")}</table></div></section>`;
+  }).join("");
+  $("#series").innerHTML = suite.series.map(seriesCard).join("");
+  const counts = {};
+  for (const t of tests()) { const s = status(t.id); counts[s] = (counts[s] || 0) + 1; }
+  const chip = (k, label, cls = "") => counts[k] ? `<span class="chip ${cls}">${counts[k]} ${label}</span>` : "";
+  $("#summary").innerHTML = chip("slow", "slower than target", "slow") + chip("fast", "clearly faster", "fast") + chip("ok", "within target")
+    + chip("error", "errors", "slow") + chip("timeout", "over time limit", "slow") + chip("untargeted", "without target") + chip("none", "not run");
+  // the page is redrawn after every run: all turns start at the same moment of the page's
+  // timeline, so that a new spinner stands where the old one was instead of starting over
+  for (const el of document.querySelectorAll(".spin")) for (const a of el.getAnimations()) a.startTime = 0;
+  $("#run-series").textContent = batchLabel(tests().filter(t => t.series), "Run all series");
+  $("#stop").disabled = !running;
+  $("#save").disabled = running || !writable;
+  $("#save").title = writable ? "Store the medians measured now as the reference; the target is 10 % above" : "Only from the computer knut web runs on (or with --allow-performance-persist)";
+  $("#clear").disabled = running;
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-run],[data-unqueue],[data-group],[data-series],[data-code]");
+  if (!b) return;
+  if (b.dataset.code) { openCode.has(b.dataset.code) ? openCode.delete(b.dataset.code) : openCode.add(b.dataset.code); render(); }
+  else if (b.dataset.unqueue) { queue = queue.filter(id => id !== b.dataset.unqueue); render(); }
+  else if (b.dataset.run) runMany([byId(b.dataset.run)]);
+  else if (b.dataset.group) runMany(tests().filter(t => t.group === b.dataset.group));
+  else if (b.dataset.series) runMany(tests().filter(t => t.series === b.dataset.series));
+});
+$("#run-all").onclick = () => runMany(tests());
+$("#run-series").onclick = () => runMany(tests().filter(t => t.series));
+$("#stop").onclick = () => { stopping = true; queue = []; render(); if (currentJob != null) fetch(`api/job/${currentJob}/cancel`, { method: "POST" }); };
+$("#clear").onclick = () => { results = {}; keep("performance-results", results); render(); };
+$("#save").onclick = async () => {
+  const done = Object.entries(results).filter(([, r]) => r.median != null && !r.error && !r.timeout);
+  if (!done.length) return alert("Nothing measured yet.");
+  if (!confirm(`Store ${done.length} medians as the new reference (target = reference + 10 %) in\n${targetsPath}?`)) return;
+  const next = { db: info.db, version: info.version, saved: new Date().toISOString(), warmup: suite.warmup, runs: suite.runs, tests: { ...(targets.tests || {}) } };
+  // + 10 %, and at least 20 ms more: short runs vary by that much from run to run
+  for (const [id, r] of done) next.tests[id] = { median: +r.median.toFixed(4), target: +Math.max(r.median * 1.1, r.median + 0.02).toFixed(4) };
+  const r = await fetch("api/performance/targets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+  if (!r.ok) return alert("Could not save: " + ((await r.json()).error || r.status));
+  targets = next;
+  showInfo();
+  render();
+};
+
+function showInfo() {
+  const n = Object.keys(targets.tests || {}).length;
+  $("#info").innerHTML = `Database <b>${esc(info.db || "none")}</b> · knut ${esc(info.version || "")} · each test: ${suite.warmup} warm-up run, then ${suite.runs} runs, the median counts (time limit ${suite.timeout} s per run).<br>`
+    + (n ? `Targets: ${n} tests, saved ${esc((targets.saved || "").slice(0, 16).replace("T", " "))} (knut ${esc(targets.version || "?")}) in <code>${esc(targetsPath)}</code>.`
+         : `No targets yet: run the tests and press “Persist as targets” (stored in <code>${esc(targetsPath || "–")}</code>).`);
+}
+
+(async () => {
+  [suite, info] = await Promise.all([fetch("performance.json").then(r => r.json()), fetch("api/info").then(r => r.json())]);
+  try {
+    const t = await (await fetch("api/performance/targets")).json();
+    targetsPath = t.path || "";
+    writable = !!t.writable;
+    if (t.targets) targets = t.targets;
+  } catch (_) { /* no database */ }
+  for (const id in results) if (results[id].running) delete results[id];
+  showInfo();
+  render();
+})();
+</script>
+</body>
+</html>

@@ -101,6 +101,10 @@ const THEMES = [
 
 // ----- accent: the colour of the controls, chosen by name -------------------------------
 
+/** The interface a path shows: /advanced the query editor, anything else the text interface. */
+function modeOfPath() {
+  return location.pathname.replace(/\/+$/, "").endsWith("/advanced") ? "advanced" : "text";
+}
 const ACCENTS = [
   { id: "orange", label: "Orange", title: "Orange accent", color: "#feaf3a" },
   { id: "magenta", label: "Magenta", title: "Magenta accent", color: "#e64fa5" },
@@ -1074,11 +1078,14 @@ const App = {
       examples: [],
       filter: "",
       docs: "",
-      // "text" (the text interface: questions in plain language, if the server has a language
-      // model) or "advanced"; "simple" is the old name of "text"
-      mode: load("mode", "text") === "simple" ? "text" : load("mode", "text"),
+      // "text" (the text interface at /: questions in plain language, if the server has a
+      // language model) or "advanced" (the query editor at /advanced)
+      mode: modeOfPath(),
     });
-    watch(() => state.mode, v => store("mode", v));
+    watch(() => state.mode, v => {
+      if (v !== modeOfPath()) history.pushState(null, "", (v === "advanced" ? "/advanced" : "/") + location.search + location.hash);
+    });
+    window.addEventListener("popstate", () => { state.mode = modeOfPath(); });
     // shown at once when chosen (before the server has said whether it has a language model,
     // so that the advanced editor does not flash up); without a model it fades over to it
     const textMode = computed(() => state.mode === "text" && (!state.info || !!state.info.chat));
