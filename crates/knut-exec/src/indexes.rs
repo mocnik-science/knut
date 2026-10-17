@@ -243,6 +243,7 @@ pub fn preload(db: &crate::db::Db, mut step: impl FnMut(&str, f64)) {
         ElementKind::PlaceIndex,
         ElementKind::NameIndex,
         ElementKind::AddressIndex,
+        ElementKind::AdminBoundaries,
         ElementKind::TagStatistics,
         ElementKind::Changesets,
     ];
@@ -257,6 +258,12 @@ pub fn preload(db: &crate::db::Db, mut step: impl FnMut(&str, f64)) {
                 }
             }
             std::hint::black_box(x);
+        });
+    }
+    // the entries of the boundaries (their areas are read on first use)
+    if db.reader.element(ElementKind::AdminBoundaries).is_some() {
+        timed(&mut step, "boundary entries", &mut || {
+            crate::boundaries::index(db);
         });
     }
     let mut net = None;
