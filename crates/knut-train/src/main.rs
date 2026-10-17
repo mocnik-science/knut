@@ -453,6 +453,19 @@ fn generate(args: &[String]) -> Result<(), String> {
         let reply = reply_text(&k.item.reply);
         samples.push((k.item.template.to_string(), messages(&system, &k.item.turns, &reply)));
         *counts.entry("query or question back".into()).or_default() += 1;
+        // the same question after an unrelated one (of the same database): a new query, not
+        // the earlier one again
+        if k.item.turns.len() == 1 && rng.chance(0.2) {
+            let others: Vec<&Kept> = kept.iter().filter(|o| o.db == k.db && o.item.turns.len() == 1 && o.item.template != k.item.template && matches!(o.item.reply, Reply::Query(_))).collect();
+            if !others.is_empty() {
+                let o = others[rng.below(others.len())];
+                let mut turns = o.item.turns.clone();
+                turns.push(("assistant".into(), reply_text(&o.item.reply)));
+                turns.extend(k.item.turns.iter().cloned());
+                samples.push((format!("{}/after_other", k.item.template), messages(&system, &turns, &reply)));
+                *counts.entry("after another question".into()).or_default() += 1;
+            }
+        }
         if let Reply::Query(good) = &k.item.reply {
             if rng.chance(0.3) {
                 for bad in corruptions(good, &mut rng) {

@@ -384,6 +384,12 @@ pub const TEMPLATES: &[(&str, usize, Template)] = &[
     ("pick_one", 3, pick_one),
     ("named_where", 4, named_where),
     ("per_area", 3, per_area),
+    ("follow_show", 3, follow_show),
+    ("hist_revert", 4, hist_revert),
+    ("hist_renamed", 2, hist_renamed),
+    ("hist_changed", 2, hist_changed),
+    ("hist_versions", 2, hist_versions),
+    ("hist_who", 2, hist_who),
     ("which_place", 8, which_place),
     ("trend", 5, trend),
     ("over_the_years", 4, over_the_years),
@@ -552,6 +558,177 @@ fn show_place(g: &mut Gen) -> Option<Item> {
     ))
 }
 
+// ── history: reverts, edit wars, renamings, versions ──
+
+/// The tags of streets whose changes are asked about: key, English, German.
+const HIST_KEYS: &[(&str, &str, &str)] = &[
+    ("name", "name", "Namen"),
+    ("highway", "road class", "Straßenklasse"),
+    ("maxspeed", "speed limit", "Höchstgeschwindigkeit"),
+    ("surface", "surface", "Oberfläche"),
+];
+
+/// The answer for a count or a set of cases.
+fn cases_answer(lang: Lang, o: &CollectedOutput, count: bool, place: &str) -> Option<String> {
+    let n = if count { int(o)? as usize } else { n_set(o)? };
+    Some(match (n, count) {
+        (0, _) => says(lang, format!("There are no such cases in {place}."), format!("In {place} gibt es keine solchen Fälle.")),
+        (n, true) => says(lang, format!("There were {n} such cases in {place}."), format!("In {place} gab es {n} solche Fälle.")),
+        (n, false) => says(lang, format!("The map shows {n} cases in {place}."), format!("Die Karte zeigt {n} Fälle in {place}.")),
+    })
+}
+
+/// "A changed the name of a street, B changed it, A changed it back" (an edit war), or a
+/// change undone within a few days (a quick revert); as cases on the map or counted.
+fn hist_revert(g: &mut Gen) -> Option<Item> {
+    let &(k, en, de) = g.rng.pick(HIST_KEYS);
+    let place = g.place()?;
+    let lang = g.lang();
+    let count = g.rng.chance(0.4);
+    let war = g.rng.chance(0.6);
+    let days = *g.rng.pick(&[1, 3, 7, 30]);
+    let r = region(&place);
+    let (q, query) = if war {
+        let q = if count {
+            g.phrase(
+                lang,
+                &["How many edit wars about the {k} of streets were there in {P}?", "How often did someone change the {k} of a street in {P}, and the mapper before changed it back?"],
+                &["Wie viele Edit-Wars um die {k} von Straßen gab es in {P}?", "Wie oft hat jemand in {P} die {k} einer Straße geändert und die Person davor hat sie zurückgeändert?"],
+                &[("k", if lang == Lang::En { en } else { de }), ("P", &place)],
+            )
+        } else {
+            g.phrase(
+                lang,
+                &[
+                    "Show me cases in {P} where a person A has given a street its {k}, person B has changed it, and person A has reverted it thereafter.",
+                    "edit wars about the {k} of streets in {P}",
+                    "Where in {P} was the {k} of a street changed by one mapper and restored by the one before?",
+                ],
+                &[
+                    "Zeig mir Fälle in {P}, in denen Person A einer Straße ihre {k} gegeben hat, Person B sie geändert hat und Person A sie danach zurückgesetzt hat.",
+                    "Edit-Wars um die {k} von Straßen in {P}",
+                    "Wo in {P} wurde die {k} einer Straße von jemandem geändert und von der Person davor wiederhergestellt?",
+                ],
+                &[("k", if lang == Lang::En { en } else { de }), ("P", &place)],
+            )
+        };
+        (q, format!("way A -> way B -> way C with A.user == C.user and B.user != A.user and A:{k} == C:{k} and A:{k} != B:{k} and A:highway within {r}"))
+    } else {
+        let d = days.to_string();
+        let q = if count {
+            g.phrase(
+                lang,
+                &["How often was the {k} of a street in {P} changed and changed back within {d} days?", "number of quick reverts of the {k} of streets in {P} (within {d} days)"],
+                &["Wie oft wurde in {P} die {k} einer Straße geändert und innerhalb von {d} Tagen zurückgeändert?", "Anzahl schneller Reverts der {k} von Straßen in {P} (innerhalb von {d} Tagen)"],
+                &[("k", if lang == Lang::En { en } else { de }), ("P", &place), ("d", &d)],
+            )
+        } else {
+            g.phrase(
+                lang,
+                &["Where in {P} was the {k} of a street changed and changed back within {d} days?", "quick reverts of the {k} of streets in {P} within {d} days"],
+                &["Wo in {P} wurde die {k} einer Straße geändert und innerhalb von {d} Tagen zurückgeändert?", "schnelle Reverts der {k} von Straßen in {P} innerhalb von {d} Tagen"],
+                &[("k", if lang == Lang::En { en } else { de }), ("P", &place), ("d", &d)],
+            )
+        };
+        (q, format!("way A -> way B -> way C closer than {days} days with A:{k} == C:{k} and A:{k} != B:{k} and A:highway within {r}"))
+    };
+    let query = if count { format!("count of {query}") } else { query };
+    let mut it = Item::query("hist_revert", lang, q, query, Box::new(move |o, _| cases_answer(lang, o.first()?, count, &place)));
+    it.zero_ok = true;
+    Some(it)
+}
+
+/// "Which streets in Findorff were renamed?": two consecutive versions with different names.
+fn hist_renamed(g: &mut Gen) -> Option<Item> {
+    let place = g.place()?;
+    let lang = g.lang();
+    let count = g.rng.chance(0.4);
+    let q = if count {
+        g.phrase(lang, &["How many times were streets renamed in {P}?", "number of street renamings in {P}"], &["Wie oft wurden in {P} Straßen umbenannt?", "Anzahl der Umbenennungen von Straßen in {P}"], &[("P", &place)])
+    } else {
+        g.phrase(lang, &["Which streets in {P} were renamed?", "renamed streets in {P}", "Show me the streets in {P} whose name changed."], &["Welche Straßen in {P} wurden umbenannt?", "umbenannte Straßen in {P}", "Zeig mir die Straßen in {P}, deren Name sich geändert hat."], &[("P", &place)])
+    };
+    let sel = format!("way A -> way B with A:name != B:name and B:highway within {}", region(&place));
+    let query = if count { format!("count of {sel}") } else { sel };
+    let mut it = Item::query("hist_renamed", lang, q, query, Box::new(move |o, _| cases_answer(lang, o.first()?, count, &place)));
+    it.zero_ok = true;
+    Some(it)
+}
+
+/// "In how many streets in Walle did the latest edit change the speed limit?"
+fn hist_changed(g: &mut Gen) -> Option<Item> {
+    let &(k, en, de) = g.rng.pick(&HIST_KEYS[1..]);
+    let place = g.place()?;
+    let lang = g.lang();
+    let q = g.phrase(
+        lang,
+        &["In how many streets in {P} did the latest edit change the {k}?", "How many streets in {P} had their {k} changed in their last edit?"],
+        &["Bei wie vielen Straßen in {P} hat die letzte Bearbeitung die {k} geändert?", "Wie viele Straßen in {P} haben bei ihrer letzten Bearbeitung eine andere {k} bekommen?"],
+        &[("k", if lang == Lang::En { en } else { de }), ("P", &place)],
+    );
+    let mut it = Item::query(
+        "hist_changed",
+        lang,
+        q,
+        format!("count of ways w with w:highway and w.previous:{k} != w:{k} within {}", region(&place)),
+        Box::new(move |o, _| {
+            let n = int(o.first()?)?;
+            Some(says(lang, format!("In {place}, the latest edit changed the {en} of {n} streets."), format!("In {place} hat die letzte Bearbeitung bei {n} Straßen die {de} geändert.")))
+        }),
+    );
+    it.zero_ok = true;
+    Some(it)
+}
+
+/// "How often has Bremen Hauptbahnhof been edited?": its versions.
+fn hist_versions(g: &mut Gen) -> Option<Item> {
+    let s = g.start()?;
+    let (name, pick) = (s.name.clone(), s.pick.clone());
+    let lang = g.lang();
+    let q = g.phrase(lang, &["How often has {S} been edited?", "How many versions does {S} have?"], &["Wie oft wurde {S} bearbeitet?", "Wie viele Versionen hat {S}?"], &[("S", &name)]);
+    Some(Item::query(
+        "hist_versions",
+        lang,
+        q,
+        format!("count of ({pick}).versions"),
+        Box::new(move |o, _| {
+            let n = int(o.first()?)?;
+            (n >= 1).then(|| says(lang, format!("{name} has {n} versions."), format!("{name} hat {n} Versionen.")))
+        }),
+    ))
+}
+
+/// "Who was involved in edit wars about speed limits in Bremen?": the mappers at position B.
+fn hist_who(g: &mut Gen) -> Option<Item> {
+    let &(k, en, de) = g.rng.pick(HIST_KEYS);
+    let place = g.place()?;
+    let lang = g.lang();
+    let q = g.phrase(
+        lang,
+        &["Who was involved in edit wars about the {k} of streets in {P}?", "Which mappers changed the {k} of a street in {P} that was then changed back?"],
+        &["Wer war an Edit-Wars um die {k} von Straßen in {P} beteiligt?", "Welche Mapper haben in {P} die {k} einer Straße geändert, die dann zurückgeändert wurde?"],
+        &[("k", if lang == Lang::En { en } else { de }), ("P", &place)],
+    );
+    let mut it = Item::query(
+        "hist_who",
+        lang,
+        q,
+        format!(
+            "war = way A -> way B -> way C with A.user == C.user and B.user != A.user and A:{k} == C:{k} and A:{k} != B:{k} and A:highway within {}\ndistinct of war_B.map(b => b.user)",
+            region(&place)
+        ),
+        Box::new(move |o, _| {
+            let n = o.first()?.value.as_array()?.len();
+            Some(match n {
+                0 => says(lang, format!("Nobody: there were no such edit wars in {place}."), format!("Niemand: In {place} gab es keine solchen Edit-Wars.")),
+                n => says(lang, format!("{n} mappers were involved in {place}."), format!("In {place} waren {n} Mapper beteiligt.")),
+            })
+        }),
+    );
+    it.zero_ok = true;
+    Some(it)
+}
+
 /// "How many benches are there per park in Vegesack?": counted per area of a kind.
 fn per_area(g: &mut Gen) -> Option<Item> {
     let t = g.thing_from(THINGS, &|t| t.kind == crate::vocab::Kind::Nodes);
@@ -566,7 +743,7 @@ fn per_area(g: &mut Gen) -> Option<Item> {
     let q = g.phrase(
         lang,
         &["How many {pl} are there per {a} in {P}?", "Number of {pl} per {a} in {P}", "{pl} per {a} in {P}", "How many {pl} does each {a} in {P} have?"],
-        &["Wie viele {pl} gibt es pro {a} in {P}?", "Anzahl der {pl} je {a} in {P}", "{pl} pro {a} in {P}", "Wie viele {pl} hat jeder {a} in {P}?"],
+        &["Wie viele {pl} gibt es pro {a} in {P}?", "Anzahl der {pl} je {a} in {P}", "{pl} pro {a} in {P}", "Wie viele {pl} gibt es je {a} in {P}?"],
         &[("pl", pl(t, lang)), ("a", if lang == Lang::En { en_sg } else { de_sg }), ("P", &place)],
     );
     let (p, areas) = (pl(t, lang), if lang == Lang::En { en_pl } else { de_pl });
@@ -588,6 +765,22 @@ fn per_area(g: &mut Gen) -> Option<Item> {
 /// "Where is Gymnasium Petrinum in Dorsten?": an object by its name (not the kind of thing
 /// its name sounds like), within the town if one is named.
 fn named_where(g: &mut Gen) -> Option<Item> {
+    // a station as people call it ("where is Bremen Hbf?"): the station by its name in the data
+    if g.rng.chance(0.25) {
+        let s = g.start()?;
+        let (en, pick, name) = (s.en.clone(), s.pick.clone(), s.name.clone());
+        if en.starts_with("the ") || !pick.contains("railway=station") {
+            return None;
+        }
+        let q = g.phrase(Lang::En, &["Where is {S}?", "where is {S}", "Show me {S} on the map."], &[], &[("S", &en)]);
+        return Some(Item::query(
+            "named_where",
+            Lang::En,
+            q,
+            pick,
+            Box::new(move |o, _| o.first().filter(|o| !o.value.is_null()).map(|_| format!("The map shows {name}."))),
+        ));
+    }
     let name = g.names(&g.ctx.named.clone())?;
     let city = g.ctx.conf.city.to_string();
     let lang = g.lang();
@@ -1511,6 +1704,36 @@ fn follow_thing(g: &mut Gen) -> Option<Item> {
     );
     it.turns.insert(0, ("user".into(), q1));
     it.turns.insert(1, ("assistant".into(), format!("QUERY:\ncount of {} within {r}", a.sel())));
+    Some(it)
+}
+
+/// After a count, "Where are they?" or "Where are the bakeries in Findorff?": the map (the
+/// selection), not another count.
+fn follow_show(g: &mut Gen) -> Option<Item> {
+    let a = g.thing();
+    let place = g.place()?;
+    let lang = g.lang();
+    let same = g.rng.chance(0.5);
+    let (b, place2) = if same { (a, place.clone()) } else { (g.thing(), g.place()?) };
+    let (pa, pb) = (pl(a, lang), pl(b, lang));
+    let q1 = g.phrase(lang, &["How many {pl} are there in {P}?"], &["Wie viele {pl} gibt es in {P}?"], &[("pl", pa), ("P", &place)]);
+    let q2 = if same {
+        g.phrase(lang, &["Where are they?", "Show them on the map.", "where are the {pl}?"], &["Wo sind sie?", "Zeig sie auf der Karte.", "wo sind die {pl}?"], &[("pl", pb)])
+    } else {
+        g.phrase(lang, &["Where are the {pl} in {P}?", "where are {pl} in {P}?", "Show the {pl} in {P}."], &["Wo sind die {pl} in {P}?", "wo gibt es {pl} in {P}?", "Zeig die {pl} in {P}."], &[("pl", pb), ("P", &place2)])
+    };
+    let mut it = Item::query(
+        "follow_show",
+        lang,
+        q2,
+        format!("{} within {}", b.sel(), region(&place2)),
+        Box::new(move |o, _| {
+            let n = n_set(o.first()?)?;
+            (n >= 1).then(|| says(lang, format!("The map shows {n} {pb} in {place2}."), format!("Die Karte zeigt {n} {pb} in {place2}.")))
+        }),
+    );
+    it.turns.insert(0, ("user".into(), q1));
+    it.turns.insert(1, ("assistant".into(), format!("QUERY:\ncount of {} within {}", a.sel(), region(&place))));
     Some(it)
 }
 
