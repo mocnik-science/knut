@@ -493,6 +493,66 @@ pub fn nearest(ctx: &Ctx, set: &Arc<SetV>, origin: &Value, mode: Option<(Mode, O
     }
 }
 
+/// The highest speed of a mode on the network (m/s): a travel time `t` covers at most
+/// `t · vmax` in a straight line.
+fn vmax(m: Mode) -> f64 {
+    match m {
+        Mode::Foot => 7.0 / 3.6,
+        Mode::Bicycle => 35.0 / 3.6,
+        _ => 250.0 / 3.6,
+    }
+}
+
+/// `nearest of SELECTION to x` for one fixed place `x`: the selection is scanned only in boxes
+/// around `x`, growing until the nearest match lies closer than anything outside the box can
+/// be (along the network: a way is at least as long as the straight line). `None` when the
+/// box would reach the whole data: then as without the boxes.
+pub fn nearest_around(ctx: &Ctx, sel: &'static Expr, origin: &Value, mode: Option<(Mode, Option<&'static Expr>)>, sc: &Sc, span: Span) -> R<Option<Value>> {
+    let Some(g) = ctx.geom_of(origin, span)? else { return Ok(Some(Value::None)) };
+    let ob = g.bbox();
+    if ob.is_empty() {
+        return Ok(None);
+    }
+    let extent = ctx.db()?.extent;
+    let key = origin.key();
+    let mut r = 1000.0;
+    loop {
+        let bx = ob.expand_m(r);
+        if bx.contains_box(&extent) {
+            return Ok(None);
+        }
+        let Some(v) = ctx.select_in_box(sel, sc, bx)? else { return Ok(None) };
+        let set = ctx.as_set(&v, sel.span)?;
+        match mode {
+            None => {
+                let ix = geo_index(ctx, &set, span)?;
+                if let Some((i, d)) = ix.nearest(&g, Some(&key))
+                    && d <= r
+                {
+                    return Ok(Some(ix.items[i].0.clone()));
+                }
+            }
+            Some((m, using)) => {
+                let Some(p) = ctx.rep_point(origin) else { return Ok(Some(Value::None)) };
+                let items = set.items(ctx, Hints::default())?;
+                if !items.is_empty() {
+                    let nn = net_nearest(ctx, &set, m, Metric::Time, using, 2.0 * r, sc, span)?;
+                    if let Some((n, snap)) = nn.net.snap(p, m) {
+                        let lab = nn.label[n as usize];
+                        // a match outside the box is more than r − snap away from the node
+                        if lab != u32::MAX && nn.dist[n as usize] * vmax(m) <= r - snap {
+                            return Ok(Some(nn.items[lab as usize].clone()));
+                        }
+                    }
+                }
+            }
+        }
+        // (measured on germany.knutdb: 3 is as good as 2 and 4 in a straight line, and the best
+        // compromise along the network, where 4 overshoots and 2 loads the network too often)
+        r *= 3.0;
+    }
+}
+
 pub fn point_of(ctx: &Ctx, v: &Value) -> Option<P> {
     ctx.rep_point(v)
 }

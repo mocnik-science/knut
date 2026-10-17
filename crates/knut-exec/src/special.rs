@@ -382,6 +382,21 @@ pub fn eval(ctx: &Ctx, e: &'static Expr, s: &'static Special, sc: &Sc) -> R<Valu
 
 pub fn non_aggregate(ctx: &Ctx, e: &'static Expr, func: OfFunc, fsp: Span, operand: &'static OfOperand, cl: &'static Clauses, sc: &Sc) -> R<Value> {
     let _ = fsp;
+    // `nearest of SELECTION to x` with a fixed `x`: only around x, not the whole selection
+    if func == OfFunc::Nearest
+        && let OfOperand::Expr(x) = operand
+        && matches!(&x.kind, ExprKind::Select(_))
+        && let Some(t) = &cl.to
+        && ctx.closed(t)
+    {
+        let origin = ctx.eval(t, sc)?;
+        if !origin.is_none() {
+            let mode = cl.mode.as_ref().map(|m| (m.mode, m.using.as_deref()));
+            if let Some(v) = spatial::nearest_around(ctx, x, &origin, mode, sc, e.span)? {
+                return Ok(v);
+            }
+        }
+    }
     let v = match operand {
         OfOperand::Expr(x) => ctx.eval(x, sc)?,
         OfOperand::Iter { set, .. } => ctx.eval(set, sc)?,

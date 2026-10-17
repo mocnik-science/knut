@@ -1156,6 +1156,10 @@ impl<'a> Parser<'a> {
             let fsp = sp.to(self.span());
             return self.of_call_from(f, fsp, sp);
         }
+        // `nearest * x to a with …`: the same as `nearest of (* x with …) to a`
+        if w == "nearest" && (*self.tok_at(1) == Tok::Star || matches!(self.tok_at(1), Tok::Ident(k) if Kind::parse(k).is_some())) {
+            return self.nearest_short(sp);
+        }
         if let Some(f) = OfFunc::parse(&w)
             && self.is_kw_at(1, "of")
         {
@@ -1429,6 +1433,41 @@ impl<'a> Parser<'a> {
         };
         let end = self.prev_span();
         Ok(Expr::new(ExprKind::Quantified { q, kind, var, var_span, set: Box::new(set), pred, cond }, start.to(end)))
+    }
+
+    /// `nearest KIND VAR [to X] [with …] [within …] [to X] [by MODE]`, read as
+    /// `nearest of (KIND VAR with … within …) to X by MODE`.
+    fn nearest_short(&mut self, sp: Span) -> PResult<Expr> {
+        self.bump(); // nearest
+        let ks = self.span();
+        let kind = if *self.tok() == Tok::Star {
+            self.bump();
+            Kind::Any
+        } else {
+            let (k, _) = self.ident()?;
+            Kind::parse(&k).map(|x| x.0).unwrap_or(Kind::Any)
+        };
+        let (var, var_span) = self.ident()?;
+        if KEYWORDS.contains(&var.as_str()) {
+            self.p -= 1;
+            self.unexpected("a variable name", "ein Variablenname");
+            return Err(());
+        }
+        let mut to = None;
+        if self.eat_kw("to") {
+            to = Some(Box::new(self.unary()?));
+        }
+        let pattern = vec![PatternItem { kind, plural: true, var, var_span, kind_span: ks }];
+        let sel = self.selection_rest(None, ks, pattern)?;
+        if to.is_none() && self.eat_kw("to") {
+            to = Some(Box::new(self.unary()?));
+        }
+        let mut clauses = Clauses { to, ..Default::default() };
+        if self.is_kw("by") && matches!(self.tok_at(1), Tok::Ident(m) if Mode::parse(m).is_some()) {
+            clauses.mode = Some(self.mode_clause()?);
+        }
+        let end = self.prev_span();
+        Ok(Expr::new(ExprKind::Of { func: OfFunc::Nearest, func_span: sp, operand: OfOperand::Expr(Box::new(sel)), clauses: Box::new(clauses) }, sp.to(end)))
     }
 
     fn of_call(&mut self, func: OfFunc, fsp: Span) -> PResult<Expr> {

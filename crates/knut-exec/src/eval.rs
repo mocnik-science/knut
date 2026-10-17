@@ -1,7 +1,7 @@
 //! The interpreter (KNUT_LANG.md §5).
 
 use crate::db::Db;
-use crate::geom::{self, Geom};
+use crate::geom::{self, BBoxF, Geom};
 use crate::region::Region;
 use crate::scan::{KindMask, ScanSpec, TimeMode};
 use crate::set::{Hints, Query, Seq, SetSrc, SetV};
@@ -1026,6 +1026,19 @@ impl Ctx {
     }
 
     fn select(&self, e: &'static Expr, s: &'static Selection, sc: &Sc) -> R<Value> {
+        self.select_in(e, s, sc, None)
+    }
+
+    /// A selection scanned only where it can meet `bbox` (it may give more: the box only
+    /// skips blocks and segments). `None` if `e` is not a selection.
+    pub(crate) fn select_in_box(&self, e: &'static Expr, sc: &Sc, bbox: BBoxF) -> R<Option<Value>> {
+        match &e.kind {
+            ExprKind::Select(s) => self.select_in(e, s, sc, Some(bbox)).map(Some),
+            _ => Ok(None),
+        }
+    }
+
+    fn select_in(&self, e: &'static Expr, s: &'static Selection, sc: &Sc, extra: Option<BBoxF>) -> R<Value> {
         let vars: Vec<String> = s.pattern.iter().map(|p| p.var.clone()).collect();
         let preds: Vec<&'static Expr> = [s.var_pred.as_deref(), s.cond.as_deref()].into_iter().flatten().collect();
         let region = match &s.within {
@@ -1054,6 +1067,12 @@ impl Ctx {
             if s.pattern.len() == 1 {
                 let var = &s.pattern[0].var;
                 bbox = crate::spatial::scan_hint(self, &preds, var, sc)?;
+                if let Some(x) = extra {
+                    bbox = Some(match bbox {
+                        Some(b) => BBoxF { minx: b.minx.max(x.minx), miny: b.miny.max(x.miny), maxx: b.maxx.min(x.maxx), maxy: b.maxy.min(x.maxy) },
+                        None => x,
+                    });
+                }
                 for p in &preds {
                     let x = pushdown::extract(p, var, self.chk);
                     pred = if pred.is_true() { x.pred } else { TagPred::And(vec![pred, x.pred]) };

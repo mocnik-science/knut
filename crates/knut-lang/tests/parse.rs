@@ -104,3 +104,19 @@ fn geocoding_and_points() {
     err("8.8E, 9.1E", "E108");
     err("x = 8.8E", "E108");
 }
+
+#[test]
+fn nearest_with_a_selection() {
+    use knut_lang::ast::{ExprKind, OfFunc, OfOperand, StmtKind};
+    ok("a = geocoded 'Am Wall 201, Bremen'\nnearest * x to a with x:amenity=school");
+    ok("a = geocoded 'Am Wall 201, Bremen'\nnearest nodes n with n:amenity=bench to a by foot");
+    ok("a = geocoded 'Am Wall 201, Bremen'\nd = nearest areas p to a with p:leisure=park within Bremen by bicycle\nd:name");
+    // read as `nearest of (* x with …) to a`
+    let (s, d) = knut_lang::parse("a = 8.8E, 53.07N\nnearest * x to a with x:amenity=school by foot");
+    assert!(d.is_empty(), "{d:?}");
+    let StmtKind::Output(o) = &s.stmts[1].kind else { panic!() };
+    let ExprKind::Of { func: OfFunc::Nearest, operand: OfOperand::Expr(sel), clauses, .. } = &o[0].kind else { panic!("{:?}", o[0].kind) };
+    let ExprKind::Select(sel) = &sel.kind else { panic!() };
+    assert!(sel.cond.is_some());
+    assert!(clauses.to.is_some() && clauses.mode.is_some());
+}
