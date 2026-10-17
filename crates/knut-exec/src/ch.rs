@@ -2060,6 +2060,14 @@ fn load_kind(db: &Db, net: &RoutingNet, kind: knut_format::container::ElementKin
     Some(l)
 }
 
+/// Loads both kinds of hierarchies now (for a server that should answer the first question
+/// as fast as the later ones).
+pub fn preload(db: &Db, net: &RoutingNet) {
+    use knut_format::container::ElementKind::{RoutingCch, RoutingCh};
+    load_kind(db, net, RoutingCh);
+    load_kind(db, net, RoutingCch);
+}
+
 /// The hierarchy that answers a question of a mode fastest, if the container has one: CH
 /// for routes by car and bicycle and for isochrones by car (its order is made for the
 /// network of the mode, which is thin for cars), CCH otherwise (its order suits the dense
