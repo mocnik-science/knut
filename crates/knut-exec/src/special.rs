@@ -382,20 +382,13 @@ pub fn eval(ctx: &Ctx, e: &'static Expr, s: &'static Special, sc: &Sc) -> R<Valu
 
 pub fn non_aggregate(ctx: &Ctx, e: &'static Expr, func: OfFunc, fsp: Span, operand: &'static OfOperand, cl: &'static Clauses, sc: &Sc) -> R<Value> {
     let _ = fsp;
-    // `nearest of SELECTION to x`: only around x, not the whole selection; for an `x` that
-    // changes (in an iteration) only for the first ones: for many, reading the selection once
-    // and searching in its index is faster
-    const AROUND: usize = 64;
+    // `nearest of SELECTION to x`: only around x, not the whole selection (also for an `x`
+    // that changes in an iteration: the boxes cost about as much as reading the selection once
+    // where it is dense, and far less where only a part of it is near the places)
     if func == OfFunc::Nearest
         && let OfOperand::Expr(x) = operand
         && matches!(&x.kind, ExprKind::Select(_))
         && let Some(t) = &cl.to
-        && (ctx.closed(t) || {
-            let mut m = lock(&ctx.caches.nearest_around);
-            let n = m.entry(e.span.start).or_default();
-            *n += 1;
-            *n <= std::env::var("KNUT_AROUND").ok().and_then(|v| v.parse().ok()).unwrap_or(AROUND)
-        })
     {
         let origin = ctx.eval(t, sc)?;
         if !origin.is_none() {
