@@ -84,7 +84,9 @@ section > h2 .meta { font-weight: 400; }
 .card table { table-layout: fixed; }
 /* fixed widths: the columns do not move while tests run or when they are done */
 th.w-med { width: 250px; } th.w-warm { width: 80px; } th.w-size { width: 90px; } th.w-k { width: 64px; }
-th.w-target { width: 80px; } th.w-delta { width: 70px; } th.w-run { width: 48px; }
+th.w-target { width: 80px; } th.w-delta { width: 84px; } th.w-run { width: 48px; }
+/* beside the plot: a narrower median, so that the input keeps room */
+.series-card th.w-med { width: 180px; } .series-card th.w-k { width: 56px; } .series-card th.w-size { width: 80px; }
 td { overflow: hidden; text-overflow: ellipsis; }
 table { width: 100%; border-collapse: collapse; }
 td, th { padding: 6px 10px; text-align: left; vertical-align: top; border-top: 1px solid var(--border); }
@@ -147,11 +149,11 @@ button.batch, #run-series { min-width: 104px; }
   .series-card .head .facts { flex-wrap: wrap; row-gap: 4px; }
   .series-card .head .slot { overflow: visible; }
   .hide-narrow { display: none; }
-  th.w-med { width: 76px; } th.w-target { width: 64px; } th.w-delta { width: 54px; } th.w-run { width: 36px; }
+  th.w-med, .series-card th.w-med { width: 76px; } th.w-target { width: 64px; } th.w-delta { width: 66px; } th.w-run { width: 36px; }
 }
 @media (max-width: 440px) {
   .hide-tiny { display: none; }
-  th.w-med { width: 64px; } th.w-delta { width: 50px; }
+  th.w-med, .series-card th.w-med { width: 64px; } th.w-delta { width: 62px; }
   td, th { padding: 6px 6px; }
   section > h2 { padding-left: 7px; }
   .median { font-size: 14px; }
@@ -169,7 +171,7 @@ button.batch, #run-series { min-width: 104px; }
   <div class="bar">
     <button class="primary" id="run-all">Run all</button>
     <button id="stop" disabled>Stop</button>
-    <button id="save" title="Store the medians measured now as the reference; the target is 10 % above">Persist as targets</button>
+    <button id="save" title="Store the medians measured now; later runs are compared with them">Persist medians</button>
     <button id="clear">Clear results</button>
     <span class="grow"></span>
     <div class="summary" id="summary"></div>
@@ -331,23 +333,26 @@ function spinLoop() {
 let spinning = false;
 const SPINNER = () => `<svg class="ico spin" style="transform: rotate(${spinAngle().toFixed(1)}deg)" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" opacity=".25"/><path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
 
-// ---- comparison with the targets: above the target (10 % over the reference) is slower;
-// clearly below the reference (by a fifth, and by more than 20 ms of noise) is faster
+// ---- comparison with the persisted median: clearly (by more than a tenth) faster is green;
+// clearly slower is red, but only for runs of more than 20 ms (shorter ones vary that much)
+const CLEARLY = 0.1;
 function status(id) {
   const r = results[id], tg = targets.tests?.[id];
   if (!r || r.running) return r?.running ? "running" : "none";
   if (r.error) return "error";
   if (r.timeout) return tg ? "slow" : "timeout";
-  if (!tg) return "untargeted";
-  if (r.median > tg.target) return "slow";
-  if (r.median < tg.median * 0.8 && tg.median - r.median > 0.02) return "fast";
+  if (!tg) return "unpersisted";
+  if (r.median > tg.median * (1 + CLEARLY) && r.median > 0.02) return "slow";
+  if (r.median < tg.median * (1 - CLEARLY)) return "fast";
   return "ok";
 }
 function delta(id) {
   const r = results[id], tg = targets.tests?.[id];
   if (!r || r.median == null || !tg) return "";
-  const d = (r.median / tg.median - 1) * 100;
-  return (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(0) + " %";
+  // (from the measured values, not the rounded ones in the table)
+  const d = Math.round((r.median - tg.median) / tg.median * 100);
+  // (no sign for what rounds to 0)
+  return (d > 0 ? "+" : d < 0 ? "−" : "") + Math.abs(d) + " %";
 }
 
 function row(t) {
@@ -359,14 +364,14 @@ function row(t) {
     <td class="num"><span class="median">${r.running && r.median == null ? (r.runs?.length ? fmt(median(r.runs)) : "…") : timeText}</span>
       <div class="runs${r.error ? " err" : ""}" title="${esc(r.error || "")}">${r.error ? esc(r.error.split("\n")[0]) : r.runs?.length ? runsText(r.runs) : "&nbsp;"}</div></td>
     <td class="num hide-narrow">${r.warmup != null ? fmt(r.warmup) : "–"}</td>
-    <td class="num hide-tiny">${tg ? fmt(tg.target) : "–"}</td>
+    <td class="num hide-tiny">${tg ? fmt(tg.median) : "–"}</td>
     <td class="num delta">${delta(t.id)}</td>
     <td class="run">${t.id === current ? `<button class="small busy" title="Running" disabled>${SPINNER()}</button>`
       : queue.includes(t.id) ? `<button class="small" title="Waiting (click to take it out)" data-unqueue="${esc(t.id)}">${CLOCK}</button>`
       : `<button class="small" title="Run this test" data-run="${esc(t.id)}">▶</button>`}</td>
-  </tr>${open ? `<tr class="code-row ${st}"><td colspan="9"><pre class="code">${esc(t.code)}</pre></td></tr>` : ""}`;
+  </tr>${open ? `<tr class="code-row ${st}"><td colspan="${t.series ? 7 : 6}"><pre class="code">${esc(t.code)}</pre></td></tr>` : ""}`;
 }
-const header = `<tr><th>Test</th><th class="num w-med">Median</th><th class="num hide-narrow w-warm">Warm-up</th><th class="num w-target hide-tiny">Target</th><th class="num w-delta">vs. ref.</th><th class="w-run"></th></tr>`;
+const header = `<tr><th>Test</th><th class="num w-med">Median</th><th class="num hide-narrow w-warm">Warm-up</th><th class="num w-target hide-tiny" title="persisted median">Persisted</th><th class="num w-delta" title="vs persisted median">vs pers.</th><th class="w-run"></th></tr>`;
 
 // ---- scaling: time = overhead + b · size^k. The overhead (what a run costs even on the
 // smallest input: parsing, the place, the first blocks) is taken as the time of the smallest
@@ -443,7 +448,7 @@ function seriesCard(s) {
       <div class="line facts"><span class="slot overhead meta">${f ? `overhead ${fmt(f.o)}` : "overhead –"}</span><span class="slot verdict-slot"><span class="verdict ${cls}">${text}</span></span></div>
     </div>
     <div class="series"><div class="plot">${plot(pts, f, s.unit)}</div>
-      <table><tr><th>Input</th><th class="num w-med">Median</th><th class="num hide-narrow w-size">Size</th><th class="num hide-narrow w-k">local k</th><th class="num w-target hide-tiny">Target</th><th class="num w-delta">vs. ref.</th><th class="w-run"></th></tr>${rows}</table></div>
+      <table><tr><th>Input</th><th class="num w-med">Median</th><th class="num hide-narrow w-size">Size</th><th class="num hide-narrow w-k">local k</th><th class="num w-target hide-tiny" title="persisted median">Persisted</th><th class="num w-delta" title="vs persisted median">vs pers.</th><th class="w-run"></th></tr>${rows}</table></div>
   </section>`;
 }
 
@@ -458,8 +463,8 @@ function render() {
   const counts = {};
   for (const t of tests()) { const s = status(t.id); counts[s] = (counts[s] || 0) + 1; }
   const chip = (k, label, cls = "") => counts[k] ? `<span class="chip ${cls}">${counts[k]} ${label}</span>` : "";
-  $("#summary").innerHTML = chip("slow", "slower than target", "slow") + chip("fast", "clearly faster", "fast") + chip("ok", "within target")
-    + chip("error", "errors", "slow") + chip("timeout", "over time limit", "slow") + chip("untargeted", "without target") + chip("none", "not run");
+  $("#summary").innerHTML = chip("slow", "clearly slower", "slow") + chip("fast", "clearly faster", "fast") + chip("ok", "about the same")
+    + chip("error", "errors", "slow") + chip("timeout", "over time limit", "slow") + chip("unpersisted", "not persisted") + chip("none", "not run");
   if (!spinning && document.querySelector(".spin")) {
     spinning = true;
     requestAnimationFrame(spinLoop);
@@ -467,7 +472,7 @@ function render() {
   $("#run-series").textContent = batchLabel(tests().filter(t => t.series), "Run all series");
   $("#stop").disabled = !running;
   $("#save").disabled = running || !writable;
-  $("#save").title = writable ? "Store the medians measured now as the reference; the target is 10 % above" : "Only from the computer knut web runs on (or with --allow-performance-persist)";
+  $("#save").title = writable ? "Store the medians measured now; later runs are compared with them" : "Only from the computer knut web runs on (or with --allow-performance-persist)";
   $("#clear").disabled = running;
 }
 
@@ -487,10 +492,9 @@ $("#clear").onclick = () => { results = {}; keep("performance-results", results)
 $("#save").onclick = async () => {
   const done = Object.entries(results).filter(([, r]) => r.median != null && !r.error && !r.timeout);
   if (!done.length) return alert("Nothing measured yet.");
-  if (!confirm(`Store ${done.length} medians as the new reference (target = reference + 10 %) in\n${targetsPath}?`)) return;
-  const next = { db: info.db, version: info.version, saved: new Date().toISOString(), warmup: suite.warmup, runs: suite.runs, tests: { ...(targets.tests || {}) } };
-  // + 10 %, and at least 20 ms more: short runs vary by that much from run to run
-  for (const [id, r] of done) next.tests[id] = { median: +r.median.toFixed(4), target: +Math.max(r.median * 1.1, r.median + 0.02).toFixed(4) };
+  if (!confirm(`Persist ${done.length} medians in\n${targetsPath}?`)) return;
+  const next = { db: info.db, version: info.version, saved: new Date().toISOString(), warmup: suite.warmup, runs: suite.runs, tests: Object.fromEntries(Object.entries(targets.tests || {}).map(([id, x]) => [id, { median: x.median }])) };
+  for (const [id, r] of done) next.tests[id] = { median: +r.median.toFixed(4) };
   const r = await fetch("api/performance/targets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
   if (!r.ok) return alert("Could not save: " + ((await r.json()).error || r.status));
   targets = next;
@@ -501,8 +505,8 @@ $("#save").onclick = async () => {
 function showInfo() {
   const n = Object.keys(targets.tests || {}).length;
   $("#info").innerHTML = `Database <b>${esc(info.db || "none")}</b> · knut ${esc(info.version || "")} · each test: ${suite.warmup} warm-up run, then ${suite.runs} runs, the median counts (time limit ${suite.timeout} s per run).<br>`
-    + (n ? `Targets: ${n} tests, saved ${esc((targets.saved || "").slice(0, 16).replace("T", " "))} (knut ${esc(targets.version || "?")}) in <code>${esc(targetsPath)}</code>.`
-         : `No targets yet: run the tests and press “Persist as targets” (stored in <code>${esc(targetsPath || "–")}</code>).`);
+    + (n ? `Persisted medians: ${n} tests, saved ${esc((targets.saved || "").slice(0, 16).replace("T", " "))} (knut ${esc(targets.version || "?")}) in <code>${esc(targetsPath)}</code>.`
+         : `No medians persisted yet: run the tests and press “Persist medians” (stored in <code>${esc(targetsPath || "–")}</code>).`);
 }
 
 (async () => {

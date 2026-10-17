@@ -6,127 +6,541 @@
     {
       "name": "Selection",
       "tests": [
-        { "id": "select.count", "title": "Count by tag", "code": "count of nodes n with n:amenity=bench within Bremen" },
-        { "id": "select.list", "title": "List with geometry", "code": "nodes n with n:amenity=bench within Bremen" },
-        { "id": "select.any", "title": "Any kind (*)", "code": "count of * x with x:amenity=library within Bremen" },
-        { "id": "select.areas", "title": "Areas", "code": "count of areas a with a:amenity=school within Bremen" },
-        { "id": "select.ways", "title": "Ways", "code": "count of ways w with w:highway=residential within Bremen" },
-        { "id": "select.name", "title": "By name (name index, whole data)", "code": "pick * x with x:name='Dialoghaus Hamburg'" },
-        { "id": "select.random", "title": "Random pick with seed", "code": "pick 5 nodes n randomly using seed 7 with n:amenity=bench within Bremen" },
-        { "id": "select.bbox", "title": "Within a box", "code": "count of nodes n with n:amenity=bench within 8.78...8.84, 53.06...53.09" },
-        { "id": "select.ordered", "title": "Ordered pick", "code": "pick 5 areas p with p:leisure=park within Bremen ordered by -p.area" }
+        {
+          "id": "select.count",
+          "title": "Count by tag",
+          "code": "count of nodes n with n:amenity=bench within Bremen"
+        },
+        {
+          "id": "select.list",
+          "title": "List with geometry",
+          "code": "nodes n with n:amenity=bench within Bremen"
+        },
+        {
+          "id": "select.any",
+          "title": "Any kind (*)",
+          "code": "count of * x with x:amenity=library within Bremen"
+        },
+        {
+          "id": "select.areas",
+          "title": "Areas",
+          "code": "count of areas a with a:amenity=school within Bremen"
+        },
+        {
+          "id": "select.ways",
+          "title": "Ways",
+          "code": "count of ways w with w:highway=residential within Bremen"
+        },
+        {
+          "id": "select.name",
+          "title": "By name (name index, whole data)",
+          "code": "pick * x with x:name='Dialoghaus Hamburg'"
+        },
+        {
+          "id": "select.random",
+          "title": "Random pick with seed",
+          "code": "pick 5 nodes n randomly using seed 7 with n:amenity=bench within Bremen"
+        },
+        {
+          "id": "select.bbox",
+          "title": "Within a box",
+          "code": "count of nodes n with n:amenity=bench within 8.78...8.84, 53.06...53.09"
+        },
+        {
+          "id": "select.ordered",
+          "title": "Ordered pick",
+          "code": "pick 5 areas p with p:leisure=park within Bremen ordered by -p.area"
+        },
+        {
+          "id": "select.exactly",
+          "title": "pick exactly",
+          "code": "pick exactly 3 nodes n with n:amenity=bench within Vegesack"
+        },
+        {
+          "id": "select.the",
+          "title": "the (exactly one)",
+          "code": "the n in (nodes x with x:railway=station and x:name='Bremen Hauptbahnhof') with n:railway=station"
+        },
+        {
+          "id": "select.relations",
+          "title": "Relations",
+          "code": "count of relations r with r:type=route within Bremen"
+        }
       ]
     },
     {
       "name": "Conditions",
       "tests": [
-        { "id": "cond.in", "title": "Value in list", "code": "count of nodes s with s:shop in [bakery, butcher, greengrocer] within Bremen" },
-        { "id": "cond.notin", "title": "Value not in list", "code": "count of nodes s with s:shop not in [supermarket, convenience] within Bremen" },
-        { "id": "cond.none", "title": "Missing tag", "code": "count of nodes n with n:amenity=bench and n:backrest == none within Bremen" },
-        { "id": "cond.bool", "title": "or / not", "code": "count of nodes n with (n:amenity=cafe or n:amenity=restaurant) and not n:wheelchair=no within Bremen" },
-        { "id": "cond.units", "title": "Units and default", "code": "count of ways w with w:highway and (w:maxspeed ?? 0 km/h) > 50 km/h within Bremen" },
-        { "id": "cond.between", "title": "between", "code": "count of areas b with b:building and b:building:levels between 3 and 5 within Bremen" },
-        { "id": "cond.method", "title": "String method", "code": "count of nodes n with n:amenity=restaurant and n:name and n:name == n:name.upper within Bremen" }
+        {
+          "id": "cond.in",
+          "title": "Value in list",
+          "code": "count of nodes s with s:shop in [bakery, butcher, greengrocer] within Bremen"
+        },
+        {
+          "id": "cond.notin",
+          "title": "Value not in list",
+          "code": "count of nodes s with s:shop not in [supermarket, convenience] within Bremen"
+        },
+        {
+          "id": "cond.none",
+          "title": "Missing tag",
+          "code": "count of nodes n with n:amenity=bench and n:backrest == none within Bremen"
+        },
+        {
+          "id": "cond.bool",
+          "title": "or / not",
+          "code": "count of nodes n with (n:amenity=cafe or n:amenity=restaurant) and not n:wheelchair=no within Bremen"
+        },
+        {
+          "id": "cond.units",
+          "title": "Units and default",
+          "code": "count of ways w with w:highway and (w:maxspeed ?? 0 km/h) > 50 km/h within Bremen"
+        },
+        {
+          "id": "cond.between",
+          "title": "between",
+          "code": "count of areas b with b:building and b:building:levels between 3 and 5 within Bremen"
+        },
+        {
+          "id": "cond.method",
+          "title": "String method",
+          "code": "count of nodes n with n:amenity=restaurant and n:name and n:name == n:name.upper within Bremen"
+        },
+        {
+          "id": "cond.literals",
+          "title": "true / false",
+          "code": "count of nodes n with n:amenity=bench and (n:backrest == 'yes') != false and true within Bremen"
+        }
       ]
     },
     {
       "name": "Time",
       "tests": [
-        { "id": "time.on", "title": "State on a date", "code": "count of nodes n with n:amenity=bench on 2015-01-01 within Bremen" },
-        { "id": "time.each", "title": "On each year", "code": "count of nodes n with n:amenity=bench within Bremen on each year from 2010 to 2024" },
-        { "id": "time.per", "title": "Per month (changes)", "code": "count of nodes s with s:shop within Bremen per month from 2022-01 to 2023-12" },
-        { "id": "time.deleted", "title": "Deleted in a year", "code": "count of nodes n with n.deleted and n within Bremen from 2023 to 2023" },
-        { "id": "time.field", "title": "Time field", "code": "count of nodes n with n:amenity=bench and n.time < 2015-01-01 within Bremen" }
+        {
+          "id": "time.on",
+          "title": "State on a date",
+          "code": "count of nodes n with n:amenity=bench on 2015-01-01 within Bremen"
+        },
+        {
+          "id": "time.each",
+          "title": "On each year",
+          "code": "count of nodes n with n:amenity=bench within Bremen on each year from 2010 to 2024"
+        },
+        {
+          "id": "time.per",
+          "title": "Per month (changes)",
+          "code": "count of nodes s with s:shop within Bremen per month from 2022-01 to 2023-12"
+        },
+        {
+          "id": "time.deleted",
+          "title": "Deleted in a year",
+          "code": "count of nodes n with n.deleted and n within Bremen from 2023 to 2023"
+        },
+        {
+          "id": "time.field",
+          "title": "Time field",
+          "code": "count of nodes n with n:amenity=bench and n.time < 2015-01-01 within Bremen"
+        },
+        {
+          "id": "time.before",
+          "title": "before",
+          "code": "count of nodes n with n:amenity=bench within Bremen on 12 months before 2024-01-01"
+        },
+        {
+          "id": "time.after",
+          "title": "after",
+          "code": "count of nodes n with n:amenity=bench within Bremen on 6 months after 2020-01-01"
+        }
       ]
     },
     {
       "name": "History",
       "tests": [
-        { "id": "hist.previous", "title": "Previous version", "code": "count of ways w with w:highway and w.previous:highway != w:highway within Bremen" },
-        { "id": "hist.sequence", "title": "Sequence A -> B", "code": "count of way A -> way B with A:highway != B:highway within Bremen" },
-        { "id": "hist.versions", "title": "Versions of one element", "code": "count of (pick node n with n:railway=station and n:name='Bremen Hauptbahnhof').versions" },
-        { "id": "hist.unchanged", "title": "Time between versions", "code": "average of (nodes n with n:amenity=bench and n.version > 1 within Bremen).map(n => n.unchangedBefore)" },
-        { "id": "hist.creator", "title": "Creators", "code": "distribution of (nodes n with n:amenity=bench within Bremen).map(n => n.creator)" }
+        {
+          "id": "hist.previous",
+          "title": "Previous version",
+          "code": "count of ways w with w:highway and w.previous:highway != w:highway within Bremen"
+        },
+        {
+          "id": "hist.sequence",
+          "title": "Sequence A -> B",
+          "code": "count of way A -> way B with A:highway != B:highway within Bremen"
+        },
+        {
+          "id": "hist.versions",
+          "title": "Versions of one element",
+          "code": "count of (pick node n with n:railway=station and n:name='Bremen Hauptbahnhof').versions"
+        },
+        {
+          "id": "hist.unchanged",
+          "title": "Time between versions",
+          "code": "average of (nodes n with n:amenity=bench and n.version > 1 within Bremen).map(n => n.unchangedBefore)"
+        },
+        {
+          "id": "hist.creator",
+          "title": "Creators",
+          "code": "distribution of (nodes n with n:amenity=bench within Bremen).map(n => n.creator)"
+        },
+        {
+          "id": "hist.next",
+          "title": "Next version",
+          "code": "count of ways w with w:highway and w.next:highway != w:highway within Bremen on 2020-01-01"
+        },
+        {
+          "id": "hist.transitions",
+          "title": "Transitions",
+          "code": "w = pick way w with w:highway and w:name='Am Wall' within Bremen ordered by -w.version\ntransitions of w.versions.map(v => v:highway)"
+        },
+        {
+          "id": "hist.split",
+          "title": "split … by … at",
+          "code": "count of (split (nodes n with n:amenity=bench within Vegesack from 2010 to 2024) by user at unchangedBefore > 30 days)"
+        }
       ]
     },
     {
       "name": "Spatial",
       "tests": [
-        { "id": "space.within", "title": "Within a district", "code": "count of nodes n with n:amenity=bench within Vegesack" },
-        { "id": "space.notwithin", "title": "Within and not within", "code": "count of nodes n with n:amenity=bench and n within Bremen and n not within Vegesack" },
-        { "id": "space.near", "title": "near some", "code": "libraries = * l with l:amenity=library within Bremen\ncount of nodes b with b:amenity=bicycle_parking and b near some _ in libraries closer than 50 m within Bremen" },
-        { "id": "space.nearno", "title": "near no", "code": "baskets = nodes w with w:amenity=waste_basket within Bremen\ncount of nodes b with b:amenity=bench and b near no _ in baskets closer than 50 m within Bremen" },
-        { "id": "space.withinset", "title": "Within a set of areas", "code": "count of nodes n with n:amenity=bench within (areas p with p:leisure=park within Bremen)" },
-        { "id": "space.overlapping", "title": "overlapping", "code": "campus = pick area a with a:amenity=university and a:name='Universität Bremen'\ncount of areas b with b:building and b overlapping campus" },
-        { "id": "space.nearest", "title": "nearest (fixed place)", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(nearest * l with l:amenity=library to s):name" },
-        { "id": "space.nearestfoot", "title": "nearest by foot (fixed place)", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(nearest * l with l:amenity=library to s by foot):name" },
-        { "id": "space.parkarea", "title": "Sum of areas", "code": "sum of (areas p with p:leisure=park within Bremen).map(p => p.area)" },
-        { "id": "space.length", "title": "Sum of lengths", "code": "sum of (ways w with w:highway=cycleway within Bremen).map(w => w.length)" }
+        {
+          "id": "space.within",
+          "title": "Within a district",
+          "code": "count of nodes n with n:amenity=bench within Vegesack"
+        },
+        {
+          "id": "space.notwithin",
+          "title": "Within and not within",
+          "code": "count of nodes n with n:amenity=bench and n within Bremen and n not within Vegesack"
+        },
+        {
+          "id": "space.near",
+          "title": "near some",
+          "code": "libraries = * l with l:amenity=library within Bremen\ncount of nodes b with b:amenity=bicycle_parking and b near some _ in libraries closer than 50 m within Bremen"
+        },
+        {
+          "id": "space.nearno",
+          "title": "near no",
+          "code": "baskets = nodes w with w:amenity=waste_basket within Bremen\ncount of nodes b with b:amenity=bench and b near no _ in baskets closer than 50 m within Bremen"
+        },
+        {
+          "id": "space.withinset",
+          "title": "Within a set of areas",
+          "code": "count of nodes n with n:amenity=bench within (areas p with p:leisure=park within Bremen)"
+        },
+        {
+          "id": "space.overlapping",
+          "title": "overlapping",
+          "code": "campus = pick area a with a:amenity=university and a:name='Universität Bremen'\ncount of areas b with b:building and b overlapping campus"
+        },
+        {
+          "id": "space.nearest",
+          "title": "nearest (fixed place)",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(nearest * l with l:amenity=library to s):name"
+        },
+        {
+          "id": "space.nearestfoot",
+          "title": "nearest by foot (fixed place)",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(nearest * l with l:amenity=library to s by foot):name"
+        },
+        {
+          "id": "space.parkarea",
+          "title": "Sum of areas",
+          "code": "sum of (areas p with p:leisure=park within Bremen).map(p => p.area)"
+        },
+        {
+          "id": "space.length",
+          "title": "Sum of lengths",
+          "code": "sum of (ways w with w:highway=cycleway within Bremen).map(w => w.length)"
+        },
+        {
+          "id": "space.equal",
+          "title": "closer than or equal",
+          "code": "libraries = * l with l:amenity=library within Bremen\ncount of nodes b with b:amenity=bicycle_parking and b near some _ in libraries closer than or equal 50 m within Bremen"
+        },
+        {
+          "id": "space.all",
+          "title": "near all",
+          "code": "station = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\ncount of nodes s with s:shop and s near all _ in [station] closer than 500 m within Bremen"
+        },
+        {
+          "id": "space.nearfoot",
+          "title": "near … by foot (network)",
+          "code": "libraries = * l with l:amenity=library within Vegesack\ncount of nodes b with b:amenity=bench and b near some _ in libraries closer than 5 min by foot within Vegesack"
+        }
       ]
     },
     {
       "name": "Routing",
       "tests": [
-        { "id": "route.foot", "title": "Path by foot", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nu = pick area a with a:amenity=university and a:name='Universität Bremen'\n(path P from s to u by foot).duration" },
-        { "id": "route.bicycle", "title": "Path by bicycle", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nu = pick area a with a:amenity=university and a:name='Universität Bremen'\n(path P from s to u by bicycle).duration" },
-        { "id": "route.car", "title": "Path by car", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nh = pick node n with n:railway=station and n:name='Hamburg Hauptbahnhof'\n(path P from s to h by car).duration" },
-        { "id": "route.iso", "title": "Isochrone 10 min by foot", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(isochrone I from s closer than 10 min by foot).area" },
-        { "id": "route.isobike", "title": "Isochrone 2 km by bicycle", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(isochrone I from s closer than 2 km by bicycle).area" }
+        {
+          "id": "route.foot",
+          "title": "Path by foot",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nu = pick area a with a:amenity=university and a:name='Universität Bremen'\n(path P from s to u by foot).duration"
+        },
+        {
+          "id": "route.bicycle",
+          "title": "Path by bicycle",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nu = pick area a with a:amenity=university and a:name='Universität Bremen'\n(path P from s to u by bicycle).duration"
+        },
+        {
+          "id": "route.car",
+          "title": "Path by car",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nh = pick node n with n:railway=station and n:name='Hamburg Hauptbahnhof'\n(path P from s to h by car).duration"
+        },
+        {
+          "id": "route.iso",
+          "title": "Isochrone 10 min by foot",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(isochrone I from s closer than 10 min by foot).area"
+        },
+        {
+          "id": "route.isobike",
+          "title": "Isochrone 2 km by bicycle",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(isochrone I from s closer than 2 km by bicycle).area"
+        },
+        {
+          "id": "route.graph",
+          "title": "Own network (graph of, using)",
+          "code": "net = graph of ways w with w:highway within 8.79...8.83, 53.07...53.09\ns = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(isochrone I from s closer than 5 min by foot using net).area"
+        }
       ]
     },
     {
       "name": "Geocoding",
       "tests": [
-        { "id": "geo.address", "title": "Address", "code": "geocode 'Am Wall 201, Bremen'" },
-        { "id": "geo.fields", "title": "Address fields", "code": "a = geocoded 'Am Wall 201, Bremen'\na.address, a.suburb, a.city, a.state" },
-        { "id": "geo.reverse", "title": "Reverse", "code": "reverse-geocoded 8.8079E, 53.0758N" },
-        { "id": "geo.per", "title": "Per suburb", "code": "count of nodes n with n:amenity=bench within Bremen per n.suburb having count > 100" }
+        {
+          "id": "geo.address",
+          "title": "Address",
+          "code": "geocode 'Am Wall 201, Bremen'"
+        },
+        {
+          "id": "geo.fields",
+          "title": "Address fields",
+          "code": "a = geocoded 'Am Wall 201, Bremen'\na.address, a.suburb, a.city, a.state"
+        },
+        {
+          "id": "geo.reverse",
+          "title": "Reverse",
+          "code": "reverse-geocoded 8.8079E, 53.0758N"
+        },
+        {
+          "id": "geo.per",
+          "title": "Per suburb",
+          "code": "count of nodes n with n:amenity=bench within Bremen per n.suburb having count > 100"
+        },
+        {
+          "id": "geo.reverselist",
+          "title": "Reverse (list)",
+          "code": "(reverse-geocode 8.8079E, 53.0758N).map(x => [x.address, x.distance])"
+        },
+        {
+          "id": "geo.adminfields",
+          "title": "Address fields from boundaries",
+          "code": "(nodes n with n:amenity=bench within Vegesack).map(n => [n.suburb, n.district, n.city, n.county, n.state, n.country])"
+        },
+        {
+          "id": "geo.firstlast",
+          "title": "first of / last of",
+          "code": "first of geocode 'Am Wall 201, Bremen', last of geocode 'Am Wall 201, Bremen'"
+        }
       ]
     },
     {
       "name": "Grouping",
       "tests": [
-        { "id": "group.tag", "title": "Per tag value", "code": "count of nodes s with s:shop within Bremen per s:shop" },
-        { "id": "group.share", "title": "Share", "code": "share of b in (nodes x with x:amenity=bench within Bremen) with b:backrest=yes" },
-        { "id": "group.areas", "title": "Per area", "code": "count of nodes n with n:amenity=bench within Bremen per (areas d with d:boundary=administrative and d:admin_level='9' within Bremen)" },
-        { "id": "group.cell", "title": "Per cell", "code": "count of nodes n with n:amenity=bench within Bremen per cell of 1 km" },
-        { "id": "group.tile", "title": "Per tile", "code": "count of nodes n with n:amenity=bench within Bremen per tile at zoom 13" },
-        { "id": "group.timetag", "title": "Per year and tag", "code": "count of nodes s with s:shop in [bakery, supermarket] within Bremen on each year from 2015 to 2024 per s:shop" }
+        {
+          "id": "group.tag",
+          "title": "Per tag value",
+          "code": "count of nodes s with s:shop within Bremen per s:shop"
+        },
+        {
+          "id": "group.share",
+          "title": "Share",
+          "code": "share of b in (nodes x with x:amenity=bench within Bremen) with b:backrest=yes"
+        },
+        {
+          "id": "group.areas",
+          "title": "Per area",
+          "code": "count of nodes n with n:amenity=bench within Bremen per (areas d with d:boundary=administrative and d:admin_level='9' within Bremen)"
+        },
+        {
+          "id": "group.cell",
+          "title": "Per cell",
+          "code": "count of nodes n with n:amenity=bench within Bremen per cell of 1 km"
+        },
+        {
+          "id": "group.tile",
+          "title": "Per tile",
+          "code": "count of nodes n with n:amenity=bench within Bremen per tile at zoom 13"
+        },
+        {
+          "id": "group.timetag",
+          "title": "Per year and tag",
+          "code": "count of nodes s with s:shop in [bakery, supermarket] within Bremen on each year from 2015 to 2024 per s:shop"
+        },
+        {
+          "id": "group.groups",
+          "title": "groups … with",
+          "code": "groups g in (count of nodes s with s:shop within Bremen per s:shop) with g.count > 50"
+        },
+        {
+          "id": "group.chunk",
+          "title": "Per chunk",
+          "code": "latest of nodes n with n:amenity=bench within Bremen per chunk of 500 ordered by n.time"
+        },
+        {
+          "id": "group.earliest",
+          "title": "earliest / latest",
+          "code": "earliest of (nodes n with n:amenity=bench within Bremen).map(n => n.time), latest of (nodes n with n:amenity=bench within Bremen).map(n => n.time)"
+        }
       ]
     },
     {
       "name": "Statistics",
       "tests": [
-        { "id": "stat.distribution", "title": "Distribution", "code": "distribution of (ways w with w:highway=residential within Bremen).map(w => w.length)" },
-        { "id": "stat.entropy", "title": "Entropy", "code": "entropy of (count of nodes s with s:shop within Bremen per s:shop)" },
-        { "id": "stat.gini", "title": "Gini", "code": "gini of (count of ways w with w:highway within Bremen per w.user)" },
-        { "id": "stat.spread", "title": "Spread", "code": "spread of nodes n with n:amenity=library within Bremen" },
-        { "id": "stat.density", "title": "Density", "code": "density of nodes n with n:amenity=bench within Vegesack" },
-        { "id": "stat.correlate", "title": "Correlate", "code": "correlate (count of nodes n with n:amenity=bench within Bremen on each year from 2010 to 2024) with (count of nodes n with n:amenity=waste_basket within Bremen on each year from 2010 to 2024)" },
-        { "id": "stat.forecast", "title": "Forecast", "code": "forecast 3 years of (count of nodes n with n:amenity=bench within Bremen on each year from 2010 to 2024)" },
-        { "id": "stat.powerlaw", "title": "Fit power law", "code": "fit powerlaw to (count of ways w with w:highway within Bremen per w.user).map(g => g.count)" },
-        { "id": "stat.classify", "title": "Classify", "code": "classify (nodes n with n:amenity=bench within Bremen) by n => n:backrest using n => [n.lon, n.lat]" }
+        {
+          "id": "stat.distribution",
+          "title": "Distribution",
+          "code": "distribution of (ways w with w:highway=residential within Bremen).map(w => w.length)"
+        },
+        {
+          "id": "stat.entropy",
+          "title": "Entropy",
+          "code": "entropy of (count of nodes s with s:shop within Bremen per s:shop)"
+        },
+        {
+          "id": "stat.gini",
+          "title": "Gini",
+          "code": "gini of (count of ways w with w:highway within Bremen per w.user)"
+        },
+        {
+          "id": "stat.spread",
+          "title": "Spread",
+          "code": "spread of nodes n with n:amenity=library within Bremen"
+        },
+        {
+          "id": "stat.density",
+          "title": "Density",
+          "code": "density of nodes n with n:amenity=bench within Vegesack"
+        },
+        {
+          "id": "stat.correlate",
+          "title": "Correlate",
+          "code": "correlate (count of nodes n with n:amenity=bench within Bremen on each year from 2010 to 2024) with (count of nodes n with n:amenity=waste_basket within Bremen on each year from 2010 to 2024)"
+        },
+        {
+          "id": "stat.forecast",
+          "title": "Forecast",
+          "code": "forecast 3 years of (count of nodes n with n:amenity=bench within Bremen on each year from 2010 to 2024)"
+        },
+        {
+          "id": "stat.powerlaw",
+          "title": "Fit power law",
+          "code": "fit powerlaw to (count of ways w with w:highway within Bremen per w.user).map(g => g.count)"
+        },
+        {
+          "id": "stat.classify",
+          "title": "Classify",
+          "code": "classify (nodes n with n:amenity=bench within Bremen) by n => n:backrest using n => [n.lon, n.lat]"
+        },
+        {
+          "id": "stat.variance",
+          "title": "Variance",
+          "code": "variance of (ways w with w:highway=residential within Bremen).map(w => w.length)"
+        },
+        {
+          "id": "stat.distinct",
+          "title": "Distinct",
+          "code": "count of (distinct of (nodes n with n:amenity=bench within Bremen).map(n => n.user))"
+        },
+        {
+          "id": "stat.regress",
+          "title": "Regress",
+          "code": "regress (count of nodes n with n:amenity=bench within Bremen on each year from 2010 to 2024) on (count of nodes n with n:amenity=waste_basket within Bremen on each year from 2010 to 2024)"
+        },
+        {
+          "id": "stat.confusion",
+          "title": "Confusion",
+          "code": "b = nodes n with n:amenity=bench and n:backrest within Bremen\nconfusion of b.map(n => n:backrest) with b.map(n => n:material ?? 'unknown')"
+        }
       ]
     },
     {
       "name": "Users, changesets and keys",
       "tests": [
-        { "id": "meta.changesets", "title": "Changesets in a quarter", "code": "count of changesets from 2024-01 to 2024-03" },
-        { "id": "meta.keys", "title": "Keys", "code": "count of keys" },
-        { "id": "meta.key", "title": "One key", "code": "shop = pick key k with k.name == 'shop'\nshop.count" }
+        {
+          "id": "meta.changesets",
+          "title": "Changesets in a quarter",
+          "code": "count of changesets from 2024-01 to 2024-03"
+        },
+        {
+          "id": "meta.keys",
+          "title": "Keys",
+          "code": "count of keys"
+        },
+        {
+          "id": "meta.key",
+          "title": "One key",
+          "code": "shop = pick key k with k.name == 'shop'\nshop.count"
+        },
+        {
+          "id": "meta.users",
+          "title": "Users",
+          "code": "count of users u with count of u.changesets > 500"
+        },
+        {
+          "id": "meta.streaks",
+          "title": "Streaks of a user",
+          "code": "u = pick user u with count of u.changesets > 1000\nstreaks of u.changesets"
+        },
+        {
+          "id": "meta.changeset",
+          "title": "One changeset",
+          "code": "pick changeset c from 2024-01-01 to 2024-01-02"
+        }
       ]
     },
     {
       "name": "Combinations",
       "tests": [
-        { "id": "combo.library", "title": "Station → nearest library → path", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nlibrary = nearest * l with l:amenity=library to s\np = path P from s to library by foot\nlibrary:name, p.length, p.duration" },
-        { "id": "combo.isoshops", "title": "Shops within an isochrone", "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nreach = isochrone I from s closer than 10 min by foot\ncount of nodes x with x:shop within reach" },
-        { "id": "combo.schoolstops", "title": "Nearest stop for each school", "code": "(areas a with a:amenity=school within Bremen).map(a => [a:name, (nearest nodes s with s:highway=bus_stop to a):name])" },
-        { "id": "combo.schoolstopsfoot", "title": "Nearest stop for each school by foot", "code": "(areas a with a:amenity=school within Vegesack).map(a => [a:name, (nearest nodes s with s:highway=bus_stop to a by foot):name])" },
-        { "id": "combo.stationshops", "title": "Shops around a station", "code": "station = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\ncount of nodes s with s:shop and s near some _ in [station] closer than 500 m" },
-        { "id": "combo.floorarea", "title": "Own field, summed", "code": "define area B: floor_area = B.area * (B:building:levels ?? 1)\nsum of (areas b with b:building within Vegesack).map(b => b.floor_area)" },
-        { "id": "combo.editwar", "title": "Edit wars (sequence of three)", "code": "war = way A -> way B -> way C closer than 30 days with A.user == C.user and B.user != A.user and A:highway == C:highway and A:highway != B:highway within Bremen\ncount of war" },
-        { "id": "combo.address", "title": "Address → station by foot", "code": "a = geocoded 'Am Wall 201, Bremen'\ns = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(path P from a to s by foot).duration" }
+        {
+          "id": "combo.library",
+          "title": "Station → nearest library → path",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nlibrary = nearest * l with l:amenity=library to s\np = path P from s to library by foot\nlibrary:name, p.length, p.duration"
+        },
+        {
+          "id": "combo.isoshops",
+          "title": "Shops within an isochrone",
+          "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\nreach = isochrone I from s closer than 10 min by foot\ncount of nodes x with x:shop within reach"
+        },
+        {
+          "id": "combo.schoolstops",
+          "title": "Nearest stop for each school",
+          "code": "(areas a with a:amenity=school within Bremen).map(a => [a:name, (nearest nodes s with s:highway=bus_stop to a):name])"
+        },
+        {
+          "id": "combo.schoolstopsfoot",
+          "title": "Nearest stop for each school by foot",
+          "code": "(areas a with a:amenity=school within Vegesack).map(a => [a:name, (nearest nodes s with s:highway=bus_stop to a by foot):name])"
+        },
+        {
+          "id": "combo.stationshops",
+          "title": "Shops around a station",
+          "code": "station = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\ncount of nodes s with s:shop and s near some _ in [station] closer than 500 m"
+        },
+        {
+          "id": "combo.floorarea",
+          "title": "Own field, summed",
+          "code": "define area B: floor_area = B.area * (B:building:levels ?? 1)\nsum of (areas b with b:building within Vegesack).map(b => b.floor_area)"
+        },
+        {
+          "id": "combo.editwar",
+          "title": "Edit wars (sequence of three)",
+          "code": "war = way A -> way B -> way C closer than 30 days with A.user == C.user and B.user != A.user and A:highway == C:highway and A:highway != B:highway within Bremen\ncount of war"
+        },
+        {
+          "id": "combo.address",
+          "title": "Address → station by foot",
+          "code": "a = geocoded 'Am Wall 201, Bremen'\ns = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(path P from a to s by foot).duration"
+        }
       ]
     }
   ],
@@ -137,7 +551,13 @@
       "code": "count of nodes n with n:amenity=bench{in}",
       "size": "count of nodes n with n:amenity=bench{in}",
       "unit": "benches",
-      "params": ["Findorff", "Bremen", "Hamburg", "Niedersachsen", ""]
+      "params": [
+        "Findorff",
+        "Bremen",
+        "Hamburg",
+        "Niedersachsen",
+        ""
+      ]
     },
     {
       "id": "scale.list",
@@ -145,7 +565,12 @@
       "code": "nodes n with n:amenity=bench{in}",
       "size": "count of nodes n with n:amenity=bench{in}",
       "unit": "benches",
-      "params": ["Findorff", "Bremen", "Hamburg", "Niedersachsen"]
+      "params": [
+        "Findorff",
+        "Bremen",
+        "Hamburg",
+        "Niedersachsen"
+      ]
     },
     {
       "id": "scale.cell",
@@ -153,7 +578,12 @@
       "code": "count of nodes n with n:amenity=bench{in} per cell of 1 km",
       "size": "count of nodes n with n:amenity=bench{in}",
       "unit": "benches",
-      "params": ["Findorff", "Bremen", "Hamburg", "Niedersachsen"]
+      "params": [
+        "Findorff",
+        "Bremen",
+        "Hamburg",
+        "Niedersachsen"
+      ]
     },
     {
       "id": "scale.near",
@@ -161,7 +591,12 @@
       "code": "libraries = * l with l:amenity=library{in}\ncount of nodes b with b:amenity=bicycle_parking and b near some _ in libraries closer than 50 m{in}",
       "size": "count of nodes b with b:amenity=bicycle_parking{in}",
       "unit": "bicycle parkings",
-      "params": ["Findorff", "Bremen", "Hamburg", "Niedersachsen"]
+      "params": [
+        "Findorff",
+        "Bremen",
+        "Hamburg",
+        "Niedersachsen"
+      ]
     },
     {
       "id": "scale.nearest",
@@ -169,7 +604,12 @@
       "code": "count of (areas a with a:amenity=school{in}).map(a => (nearest nodes s with s:highway=bus_stop to a))",
       "size": "count of areas a with a:amenity=school{in}",
       "unit": "schools",
-      "params": ["Findorff", "Bremen", "Hamburg", "Niedersachsen"]
+      "params": [
+        "Findorff",
+        "Bremen",
+        "Hamburg",
+        "Niedersachsen"
+      ]
     },
     {
       "id": "scale.history",
@@ -177,15 +617,32 @@
       "code": "count of ways w with w:highway and w.previous:highway != w:highway{in}",
       "size": "count of ways w with w:highway{in}",
       "unit": "highways",
-      "params": ["Findorff", "Bremen", "Hamburg", "Niedersachsen"]
+      "params": [
+        "Findorff",
+        "Bremen",
+        "Hamburg",
+        "Niedersachsen"
+      ]
     },
     {
       "id": "scale.iso",
       "title": "Isochrone by foot",
       "code": "s = pick node n with n:railway=station and n:name='Bremen Hauptbahnhof'\n(isochrone I from s closer than {p} min by foot).area",
-      "sizes": [5, 10, 20, 40, 80],
+      "sizes": [
+        5,
+        10,
+        20,
+        40,
+        80
+      ],
       "unit": "minutes",
-      "params": ["5", "10", "20", "40", "80"]
+      "params": [
+        "5",
+        "10",
+        "20",
+        "40",
+        "80"
+      ]
     }
   ]
 }
