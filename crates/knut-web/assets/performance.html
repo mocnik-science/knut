@@ -91,7 +91,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 td.title .id { color: var(--fg-soft); font-size: 11px; font-family: var(--mono); }
 td.title .name { cursor: pointer; }
 td.title .name:hover { text-decoration: underline dotted; }
-pre.code { margin: 6px 0 0; padding: 6px 8px; background: var(--bg-code); border-radius: 6px; font: 12px/1.4 var(--mono); white-space: pre-wrap; word-break: break-word; }
+/* the code of a test, opened by clicking its name: a row of its own, as wide as the table */
+tr.code-row > td { border-top: none; padding-top: 0; }
+pre.code { margin: 0; padding: 6px 8px; background: var(--bg-code); border-radius: 6px; font: 12px/1.4 var(--mono); white-space: pre-wrap; word-break: break-word; }
 .runs { color: var(--fg-soft); font-size: 11px; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 17px; height: 17px; }
 .median { display: block; line-height: 21px; height: 21px; white-space: nowrap; }
 td.title .name { display: block; }
@@ -107,11 +109,10 @@ tr.slow .delta, tr.slow .median { color: var(--slow); }
 tr.fast > td { background: var(--fast-bg); }
 tr.fast .delta, tr.fast .median { color: var(--fast); }
 tr.running .median { color: var(--accent); }
-.ico { width: 12px; height: 12px; display: block; }
+.ico { width: 10px; height: 10px; display: block; }
 td.run button { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 22px; padding: 0; }
 td.run button.busy { color: var(--accent); opacity: 1; }
-.spin { animation: spin .8s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.spin { transform-origin: 50% 50%; }
 /* the same width whatever the label says (Run group / Waiting… / Running…) */
 button.batch, #run-series { min-width: 104px; }
 .delta { font-weight: 600; }
@@ -314,7 +315,18 @@ function batchLabel(ts, idle) {
   return idle;
 }
 const CLOCK = `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 4.6V8l2.4 1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
-const SPINNER = () => `<svg class="ico spin" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" opacity=".25"/><path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+// the turn of the spinners comes from the clock, not from a CSS animation: the page is redrawn
+// after every run, and a new spinner stands at once where the old one was
+const spinAngle = () => (performance.now() % 800) / 800 * 360;
+function spinLoop() {
+  const els = document.querySelectorAll(".spin");
+  const a = `rotate(${spinAngle().toFixed(1)}deg)`;
+  for (const el of els) el.style.transform = a;
+  if (els.length) requestAnimationFrame(spinLoop);
+  else spinning = false;
+}
+let spinning = false;
+const SPINNER = () => `<svg class="ico spin" style="transform: rotate(${spinAngle().toFixed(1)}deg)" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="2" opacity=".25"/><path d="M8 2a6 6 0 0 1 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
 
 // ---- comparison with the targets: above the target (10 % over the reference) is slower;
 // clearly below the reference (by a fifth, and by more than 20 ms of noise) is faster
@@ -340,9 +352,7 @@ function row(t) {
   const open = openCode.has(t.id);
   const timeText = r.timeout ? `> ${suite.timeout} s` : r.error ? "error" : fmt(r.median);
   return `<tr class="${st}">
-    <td class="title"><span class="name" data-code="${esc(t.id)}" title="${esc(t.title)}">${esc(t.series ? t.param || "Germany" : t.title)}</span><span class="id">${esc(t.id)}</span>
-      ${open ? `<pre class="code">${esc(t.code)}</pre>` : ""}
-</td>
+    <td class="title"><span class="name" data-code="${esc(t.id)}" title="${esc(t.title)}">${esc(t.series ? t.param || "Germany" : t.title)}</span><span class="id">${esc(t.id)}</span></td>
     <td class="num"><span class="median">${r.running && r.median == null ? (r.runs?.length ? fmt(median(r.runs)) : "…") : timeText}</span>
       <div class="runs${r.error ? " err" : ""}" title="${esc(r.error || "")}">${r.error ? esc(r.error.split("\n")[0]) : r.runs?.length ? runsText(r.runs) : "&nbsp;"}</div></td>
     <td class="num hide-narrow">${r.warmup != null ? fmt(r.warmup) : "–"}</td>
@@ -351,7 +361,7 @@ function row(t) {
     <td class="run">${t.id === current ? `<button class="small busy" title="Running" disabled>${SPINNER()}</button>`
       : queue.includes(t.id) ? `<button class="small" title="Waiting (click to take it out)" data-unqueue="${esc(t.id)}">${CLOCK}</button>`
       : `<button class="small" title="Run this test" data-run="${esc(t.id)}">▶</button>`}</td>
-  </tr>`;
+  </tr>${open ? `<tr class="code-row ${st}"><td colspan="9"><pre class="code">${esc(t.code)}</pre></td></tr>` : ""}`;
 }
 const header = `<tr><th>Test</th><th class="num w-med">Median</th><th class="num hide-narrow w-warm">Warm-up</th><th class="num w-target hide-tiny">Target</th><th class="num w-delta">vs. ref.</th><th class="w-run"></th></tr>`;
 
@@ -447,9 +457,10 @@ function render() {
   const chip = (k, label, cls = "") => counts[k] ? `<span class="chip ${cls}">${counts[k]} ${label}</span>` : "";
   $("#summary").innerHTML = chip("slow", "slower than target", "slow") + chip("fast", "clearly faster", "fast") + chip("ok", "within target")
     + chip("error", "errors", "slow") + chip("timeout", "over time limit", "slow") + chip("untargeted", "without target") + chip("none", "not run");
-  // the page is redrawn after every run: all turns start at the same moment of the page's
-  // timeline, so that a new spinner stands where the old one was instead of starting over
-  for (const el of document.querySelectorAll(".spin")) for (const a of el.getAnimations()) a.startTime = 0;
+  if (!spinning && document.querySelector(".spin")) {
+    spinning = true;
+    requestAnimationFrame(spinLoop);
+  }
   $("#run-series").textContent = batchLabel(tests().filter(t => t.series), "Run all series");
   $("#stop").disabled = !running;
   $("#save").disabled = running || !writable;
