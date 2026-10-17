@@ -143,6 +143,38 @@ fn admins_near(ctx: &Ctx, level: u32, p: P) -> R<Arc<Vec<Arc<Admin>>>> {
     }
     let db = ctx.db()?;
     let bbox = BBoxF { minx: cell.0 as f64 * CELL_DEG, maxx: (cell.0 + 1) as f64 * CELL_DEG, miny: cell.1 as f64 * CELL_DEG, maxy: (cell.1 + 1) as f64 * CELL_DEG };
+    // with the index of the boundaries: its entries instead of a scan, their areas read, not
+    // assembled
+    if let Some(ix) = crate::boundaries::index(db) {
+        let mut out = Vec::new();
+        for en in ix.entries.iter().filter(|en| en.level == level) {
+            // (as below: an area whose box meets the cell; an empty one of a country whose
+            // relation lies there)
+            let near = match en.gbbox {
+                Some(b) => b.intersects(&bbox),
+                None => level == 2 && en.ebbox.is_none_or(|b| b.intersects(&bbox)),
+            };
+            if !near {
+                continue;
+            }
+            let a = match admins(ctx, |a| a.areas.get(&en.id).cloned())? {
+                Some(a) => a,
+                None => {
+                    let g = ix.geom(db, en).unwrap_or(crate::geom::Geom::Empty);
+                    let region = Region::from_geom(Arc::new(g), String::new());
+                    let a = Arc::new(Admin { name: en.name.clone(), iso: en.iso.clone(), bbox: region.bbox(), region });
+                    admins(ctx, |x| x.areas.insert(en.id, a.clone()))?;
+                    a
+                }
+            };
+            if !a.bbox.is_empty() && a.bbox.intersects(&bbox) || a.bbox.is_empty() && level == 2 && en.ebbox.is_none_or(|b| b.intersects(&bbox)) {
+                out.push(a);
+            }
+        }
+        let out = Arc::new(out);
+        admins(ctx, |a| a.cells.insert((level, cell.0, cell.1), out.clone()))?;
+        return Ok(out);
+    }
     let spec = ScanSpec {
         bbox: Some(bbox),
         kinds: KindMask { relation: true, ..Default::default() },
@@ -182,7 +214,7 @@ fn admin(ctx: &Ctx, e: &Elem, level: u32) -> R<Arc<Admin>> {
     ar.bbox = e.bbox;
     let region = Region::from_geom(ctx.elem_geom(&ar), String::new());
     let bbox = region.bbox();
-    let iso = e.tag(if level == 2 { "ISO3166-1:alpha2" } else { "ISO3166-2" }).or_else(|| if level == 2 { e.tag("ISO3166-1") } else { None }).cloned();
+    let iso = crate::boundaries::iso_of(e, level);
     let a = Arc::new(Admin { name: e.tag("name").cloned(), iso, region, bbox });
     admins(ctx, |x| x.areas.insert(e.id, a.clone()))?;
     Ok(a)

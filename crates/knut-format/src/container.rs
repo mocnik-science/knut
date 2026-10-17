@@ -30,6 +30,7 @@ pub enum ElementKind {
     PlaceIndex = 100,
     NameIndex = 101,
     AddressIndex = 102,
+    AdminBoundaries = 103,
     TagStatistics = 110,
     Changesets = 120,
     RoutingNetwork = 130,
@@ -100,6 +101,9 @@ pub const KINDS: &[KindInfo] = &[
     KindInfo { kind: ElementKind::AddressIndex, name: "Address index", sort: "geocoding", base: false, addable: true, command: "addresses",
         about: "House numbers with street, postcode and place: geocoding of addresses and reverse geocoding of points. \
                 Uses the place index." },
+    KindInfo { kind: ElementKind::AdminBoundaries, name: "Administrative boundaries", sort: "areas", base: false, addable: true, command: "boundaries",
+        about: "All administrative boundaries (countries, states, counties, municipalities, …) with their areas already assembled: \
+                address fields such as `x.city` and `x.state` and `within <place name>` read them instead of assembling them from the ways." },
     KindInfo { kind: ElementKind::TagStatistics, name: "Tag statistics", sort: "statistics", base: false, addable: true, command: "keys",
         about: "Keys and values with their counts and their development over time; answers `keys`, `k.count` and `k.values` at once." },
     KindInfo { kind: ElementKind::Changesets, name: "Changesets and users", sort: "lookup", base: false, addable: true, command: "changesets",

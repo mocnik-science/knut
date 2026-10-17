@@ -30,7 +30,7 @@ pub struct Built {
 /// Kinds that can be built by this version, with the moments they support.
 pub fn supported(kind: ElementKind) -> &'static [Temporal] {
     match kind {
-        ElementKind::PlaceIndex | ElementKind::NameIndex | ElementKind::AddressIndex | ElementKind::TagStatistics => &[Temporal::Latest],
+        ElementKind::PlaceIndex | ElementKind::NameIndex | ElementKind::AddressIndex | ElementKind::AdminBoundaries | ElementKind::TagStatistics => &[Temporal::Latest],
         ElementKind::Changesets => &[Temporal::Full],
         ElementKind::RoutingNetwork | ElementKind::RoutingCh | ElementKind::RoutingCch => &[Temporal::Latest],
         _ => &[],
@@ -80,6 +80,14 @@ pub fn build(path: &Path, kind: ElementKind, temporal: Temporal, progress: &Prog
             Ok(Built {
                 sections: vec![NewSection { kind: knut_format::layout::SectionKind::Index as u32, flags: 0, bytes }],
                 params: vec![time_param(&db), ("places".into(), places.len().to_string())],
+            })
+        }
+        ElementKind::AdminBoundaries => {
+            let bs = with_progress(progress, 0.0, 0.9, |c| crate::boundaries::collect(&db, Some(c))).map_err(err)?;
+            let bytes = crate::boundaries::encode(&bs);
+            Ok(Built {
+                sections: vec![NewSection { kind: knut_format::layout::SectionKind::Index as u32, flags: 0, bytes }],
+                params: vec![time_param(&db), ("boundaries".into(), bs.len().to_string())],
             })
         }
         ElementKind::TagStatistics => {

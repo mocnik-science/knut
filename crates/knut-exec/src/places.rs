@@ -163,7 +163,11 @@ fn choose(ctx: &Ctx, name: &str, span: Span, mut cands: Vec<Cand>, names: Vec<St
     let e = &tied[0].elem;
     let mut ar = Elem::new(EKind::Area, e.otype, e.id, e.v.clone(), e.at);
     ar.bbox = e.bbox;
-    let g = ctx.elem_geom(&ar);
+    // read from the index of the boundaries if it holds this version, else assembled
+    let g = match crate::boundaries::area_geom(ctx.db()?, &ar) {
+        Some(g) => g,
+        None => ctx.elem_geom(&ar),
+    };
     if g.is_empty() {
         return Err(RtErr::fatal(Diagnostic::error(
             "E210",

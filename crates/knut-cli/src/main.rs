@@ -616,7 +616,7 @@ fn build(a: BuildArgs) -> Result<(), String> {
     );
     if !a.no_index {
         use knut_format::container::{ElementKind, Temporal};
-        for kind in [ElementKind::PlaceIndex, ElementKind::NameIndex, ElementKind::AddressIndex, ElementKind::TagStatistics] {
+        for kind in [ElementKind::PlaceIndex, ElementKind::NameIndex, ElementKind::AddressIndex, ElementKind::AdminBoundaries, ElementKind::TagStatistics] {
             let t = Instant::now();
             let id = knut_exec::indexes::add(&a.output, kind, Temporal::Latest, &knut_exec::indexes::Progress::default())?;
             log(&format!("added element {id}: {} ({:.1}s)", kind.info().name.to_lowercase(), t.elapsed().as_secs_f64()));

@@ -7,6 +7,7 @@
 pub mod address;
 pub mod agg;
 pub mod areas;
+pub mod boundaries;
 pub mod arith;
 pub mod cache;
 pub mod ch;
